@@ -1,89 +1,209 @@
-name: RDP
+name: Secure Windows Environment RDP
 
 on:
   workflow_dispatch:
 
 jobs:
-  secure-rdp:
+  build-and-run:
     runs-on: windows-latest
+    timeout-minutes: 350
 
     steps:
-      - name: Configure Core RDP Settings
+      - name: Harden System and Enable RDP Access
         run: |
-          # Enable Remote Desktop and disable Network Level Authentication
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
-                             -Name "fDenyTSConnections" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
-                             -Name "UserAuthentication" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
-                             -Name "SecurityLayer" -Value 0 -Force
-
-          # Configure firewall for RDP
-          netsh advfirewall firewall delete rule name="RDP-Tailscale" >$null 2>&1
-          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
-
-          # Restart the Remote Desktop service
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name "LocalAccountTokenFilterPolicy" -Value 1 -Force
+          Set-Service -Name TermService -StartupType Automatic
+          
+          net accounts /lockoutthreshold:0
+          
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction SilentlyContinue
+          netsh advfirewall firewall delete rule name="RDP-Inbound-3389" >$null 2>&1
+          netsh advfirewall firewall add rule name="RDP-Inbound-3389" dir=in action=allow protocol=TCP localport=3389
+          
           Restart-Service -Name TermService -Force
 
-      - name: Create RDP User with Fixed Password
+      - name: Provision Administrator Account
         run: |
-          $password = "Amirali.138800"
-          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-          New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires -ErrorAction SilentlyContinue
-          Add-LocalGroupMember -Group "Administrators" -Member "RDP" -ErrorAction SilentlyContinue
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP" -ErrorAction SilentlyContinue
+          $Username = "Administrator"
+          $Chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
+          $Bytes = New-Object byte[] 14
+          (New-Object System.Security.Cryptography.RNGCryptoServiceProvider).GetBytes($Bytes)
+          $Password = "Rx7#" + (-join ($Bytes | ForEach-Object { $Chars[$_ % $Chars.Length] })) + "!9"
+          $SecurePassword = ConvertTo-SecureString $Password -AsPlainText -Force
           
-          echo "RDP_PASSWORD=$password" >> $env:GITHUB_ENV
+          Set-LocalUser -Name $Username -Password $SecurePassword -PasswordNeverExpires $true -AccountNeverExpires
+          Enable-LocalUser -Name $Username
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $Username -ErrorAction SilentlyContinue
+          
+          "RDP_USER=$Username" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RDP_PASS=$Password" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Install Tailscale
+      - name: Apply Desktop Theme and Keyboard Configuration
         run: |
-          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
-          $installerPath = "$env:TEMP\tailscale.msi"
-          
-          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
-          Start-Process msiexec.exe -ArgumentList "/i", $installerPath, "/quiet", "/norestart" -Wait
-          Remove-Item $installerPath -Force
-          
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" version
-
-      - name: Establish Tailscale Connection
-        run: |
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
-          
-          # Wait for IP
-          $tsIP = $null
-          for ($i=0; $i -lt 10 -and -not $tsIP; $i++) {
-              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
-              Start-Sleep -Seconds 5
+          $ThemePaths = @(
+              "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+              "Registry::HKEY_USERS\.DEFAULT\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
+          )
+          foreach ($Path in $ThemePaths) {
+              if (-not (Test-Path $Path)) { New-Item -Path $Path -Force | Out-Null }
+              Set-ItemProperty -Path $Path -Name "AppsUseLightTheme" -Value 0 -Force
+              Set-ItemProperty -Path $Path -Name "SystemUsesLightTheme" -Value 0 -Force
+              Set-ItemProperty -Path $Path -Name "EnableTransparency" -Value 1 -Force
           }
           
-          if (-not $tsIP) {
-              Write-Error "Tailscale IP not assigned"
+          $IconPaths = @(
+              "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel",
+              "Registry::HKEY_USERS\.DEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel"
+          )
+          foreach ($Path in $IconPaths) {
+              if (-not (Test-Path $Path)) { New-Item -Path $Path -Force | Out-Null }
+              Set-ItemProperty -Path $Path -Name "{20D04FE0-3AEA-1069-A2D8-08002B30309D}" -Value 0 -Force
+              Set-ItemProperty -Path $Path -Name "{59031a47-3f72-44a7-89c5-5595fe6b30ee}" -Value 0 -Force
+          }
+          
+          $LanguageList = Get-WinUserLanguageList
+          if (-not ($LanguageList | Where-Object { $_.LanguageTag -eq "fa-IR" })) {
+              $LanguageList.Add("fa-IR")
+              Set-WinUserLanguageList -LanguageList $LanguageList -Force
+          }
+          
+          Import-Module International -ErrorAction SilentlyContinue
+          Copy-UserInternationalSettingsToSystem -SourceUser $env:USERNAME -destination:AllUsers -ErrorAction SilentlyContinue
+          
+          Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
+
+      - name: Install Brave Browser
+        run: |
+          $Url = "https://laptop-updates.brave.com/latest/winx64"
+          $Installer = "$env:TEMP\BraveSetup.exe"
+          
+          for ($i = 1; $i -le 3; $i++) {
+              try {
+                  Invoke-WebRequest -Uri $Url -OutFile $Installer -UseBasicParsing
+                  break
+              } catch { Start-Sleep -Seconds 5 }
+          }
+          
+          Start-Process -FilePath $Installer -ArgumentList "/silent", "/install" -Wait
+          Remove-Item -Path $Installer -Force -ErrorAction SilentlyContinue
+
+      - name: Install Visual Studio Code
+        run: |
+          $Url = "https://update.code.visualstudio.com/latest/win32-x64/stable"
+          $Installer = "$env:TEMP\VSCodeSetup.exe"
+          
+          for ($i = 1; $i -le 3; $i++) {
+              try {
+                  Invoke-WebRequest -Uri $Url -OutFile $Installer -UseBasicParsing
+                  break
+              } catch { Start-Sleep -Seconds 5 }
+          }
+          
+          Start-Process -FilePath $Installer -ArgumentList "/verysilent", "/norestart", "/mergetasks=!runcode,addcontextmenufiles,addcontextmenufolders,associatewithfiles,addtopath" -Wait
+          Remove-Item -Path $Installer -Force -ErrorAction SilentlyContinue
+
+      - name: Install Internet Download Manager
+        run: |
+          $Url = "https://mirror2.internetdownloadmanager.com/idman642build25.exe"
+          $Installer = "$env:TEMP\idman_setup.exe"
+          
+          for ($i = 1; $i -le 3; $i++) {
+              try {
+                  Invoke-WebRequest -Uri $Url -OutFile $Installer -UseBasicParsing -UserAgent "Mozilla/5.0"
+                  break
+              } catch { Start-Sleep -Seconds 5 }
+          }
+          
+          $Process = Start-Process -FilePath $Installer -ArgumentList "/s" -PassThru
+          Start-Sleep -Seconds 20
+          
+          if (-not $Process.HasExited) {
+              Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+          }
+          
+          Get-Process -Name "idman*", "IEMonitor*" -ErrorAction SilentlyContinue | Stop-Process -Force
+          Remove-Item -Path $Installer -Force -ErrorAction SilentlyContinue
+
+      - name: Deploy 3x-ui Panel as Persistent Service
+        run: |
+          $Url = "https://github.com/MHSanaei/3x-ui/releases/download/v3.6.0/x-ui-windows-amd64.zip"
+          $ZipPath = "$env:TEMP\3x-ui.zip"
+          $InstallPath = "C:\3x-ui"
+          
+          for ($i = 1; $i -le 3; $i++) {
+              try {
+                  Invoke-WebRequest -Uri $Url -OutFile $ZipPath -UseBasicParsing
+                  break
+              } catch { Start-Sleep -Seconds 5 }
+          }
+          
+          if (Test-Path $InstallPath) { Remove-Item -Path $InstallPath -Recurse -Force }
+          Expand-Archive -Path $ZipPath -DestinationPath $InstallPath -Force
+          Remove-Item -Path $ZipPath -Force -ErrorAction SilentlyContinue
+          
+          $ExePath = Get-ChildItem -Path $InstallPath -Filter "x-ui.exe" -Recurse | Select-Object -First 1 -ExpandProperty FullName
+          
+          if ($ExePath) {
+              $WorkDir = Split-Path -Path $ExePath -Parent
+              $Action = New-ScheduledTaskAction -Execute $ExePath -WorkingDirectory $WorkDir
+              $Trigger = New-ScheduledTaskTrigger -AtStartup
+              $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero)
+              $Principal = New-ScheduledTaskPrincipal -UserId "NT AUTHORITY\SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+              
+              Unregister-ScheduledTask -TaskName "3x-ui-Service" -Confirm:$false -ErrorAction SilentlyContinue
+              Register-ScheduledTask -TaskName "3x-ui-Service" -Action $Action -Trigger $Trigger -Settings $Settings -Principal $Principal -Force
+              Start-ScheduledTask -TaskName "3x-ui-Service"
+          }
+
+      - name: Establish Tailscale Secure Tunnel
+        run: |
+          $Url = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          $Installer = "$env:TEMP\tailscale.msi"
+          
+          for ($i = 1; $i -le 3; $i++) {
+              try {
+                  Invoke-WebRequest -Uri $Url -OutFile $Installer -UseBasicParsing
+                  break
+              } catch { Start-Sleep -Seconds 5 }
+          }
+          
+          Start-Process msiexec.exe -ArgumentList "/i", $Installer, "/quiet", "/norestart" -Wait
+          Remove-Item -Path $Installer -Force -ErrorAction SilentlyContinue
+          
+          $TailscaleExe = "$env:ProgramFiles\Tailscale\tailscale.exe"
+          & $TailscaleExe up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=win-server-$env:GITHUB_RUN_ID --accept-risk=all
+          
+          $TailscaleIP = $null
+          for ($i = 0; $i -lt 15 -and -not $TailscaleIP; $i++) {
+              Start-Sleep -Seconds 4
+              $TailscaleIP = & $TailscaleExe ip -4
+          }
+          
+          if (-not $TailscaleIP) {
+              Write-Error "Failed to acquire Tailscale IP address"
               exit 1
           }
-          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+          
+          "TAILSCALE_IP=$TailscaleIP" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Verify RDP Accessibility
-        run: |
-          Write-Host "Tailscale IP: $env:TAILSCALE_IP"
-          $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
-          if (-not $testResult.TcpTestSucceeded) {
-              Write-Error "TCP connection to RDP port 3389 failed"
-              exit 1
-          }
-          Write-Host "TCP connectivity successful!"
-
-      - name: Keep Runner Alive
+      - name: Display Access Credentials and Maintain Session
         if: always()
         run: |
-          Write-Host "`n=== RDP ACCESS ==="
-          Write-Host "Address: $env:TAILSCALE_IP"
-          Write-Host "Username: RDP"
-          Write-Host "Password: $env:RDP_PASSWORD"
-          Write-Host "==================`n"
+          Write-Host ""
+          Write-Host "=================================================="
+          Write-Host "           SECURE RDP SESSION READY"
+          Write-Host "=================================================="
+          Write-Host "Tailscale IP : $env:TAILSCALE_IP"
+          Write-Host "RDP Port     : 3389"
+          Write-Host "Username     : $env:RDP_USER"
+          Write-Host "Password     : $env:RDP_PASS"
+          Write-Host "=================================================="
+          Write-Host ""
           
-          # Infinite loop to keep runner alive until timeout/cancel
           while ($true) {
-              Write-Host "[$(Get-Date)] RDP session active"
               Start-Sleep -Seconds 600
+              Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] Session active"
           }
