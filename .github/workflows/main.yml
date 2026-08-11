@@ -148,63 +148,60 @@ jobs:
               Start-ScheduledTask -TaskName "3x-ui-Service"
           }
 
-      - name: Establish Ngrok Tunnel
-        env:
-          NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+      - name: Establish High-Speed TCP Tunnel
         run: |
-          if ([string]::IsNullOrWhiteSpace($env:NGROK_AUTH_TOKEN)) {
-              Write-Host "##[error] NGROK_AUTH_TOKEN secret is empty."
-              exit 1
-          }
+          $Address = $null
+          $BoreDir = "C:\bore"
+          New-Item -Path $BoreDir -ItemType Directory -Force | Out-Null
+          $ZipPath = "$env:TEMP\bore.zip"
+          $BoreUrl = "https://github.com/ekzhang/bore/releases/download/v0.5.0/bore-v0.5.0-x86_64-pc-windows-msvc.zip"
 
-          choco install ngrok -y --no-progress
-          if ($LASTEXITCODE -ne 0) {
-              Write-Host "##[error] Chocolatey failed to install ngrok. Exit code: $LASTEXITCODE"
-              exit 1
-          }
+          try {
+              Invoke-WebRequest -Uri $BoreUrl -OutFile $ZipPath -UseBasicParsing
+              Expand-Archive -Path $ZipPath -DestinationPath $BoreDir -Force
+              Remove-Item -Path $ZipPath -Force -ErrorAction SilentlyContinue
+              $BoreExe = "$BoreDir\bore.exe"
+              $BoreLog = "$env:TEMP\bore_log.txt"
 
-          $NgrokExe = "C:\ProgramData\chocolatey\bin\ngrok.exe"
-          if (-not (Test-Path $NgrokExe)) {
-              $Found = Get-Command ngrok -ErrorAction SilentlyContinue
-              if ($Found) { $NgrokExe = $Found.Source }
-          }
+              if (Test-Path $BoreExe) {
+                  Start-Process -FilePath $BoreExe -ArgumentList "local 3389 --to bore.pub" -RedirectStandardOutput $BoreLog -RedirectStandardError $BoreLog -WindowStyle Hidden
 
-          if (-not (Test-Path $NgrokExe)) {
-              Write-Host "##[error] ngrok.exe not found after installation."
-              exit 1
-          }
-
-          & $NgrokExe config add-authtoken $env:NGROK_AUTH_TOKEN
-          if ($LASTEXITCODE -ne 0) {
-              Write-Host "##[error] Failed to configure ngrok authtoken."
-              exit 1
-          }
-
-          $LogPath = "$env:TEMP\ngrok_log.txt"
-          Start-Process -FilePath $NgrokExe -ArgumentList "tcp 3389 --log=stdout" -RedirectStandardOutput $LogPath -WindowStyle Hidden
-
-          $TunnelUrl = $null
-          for ($i = 1; $i -le 20; $i++) {
-              Start-Sleep -Seconds 3
-              try {
-                  $NgrokApi = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -ErrorAction Stop
-                  if ($NgrokApi.tunnels.Count -gt 0) {
-                      $TunnelUrl = $NgrokApi.tunnels[0].public_url -replace "tcp://", ""
-                      break
+                  for ($i = 1; $i -le 10; $i++) {
+                      Start-Sleep -Seconds 2
+                      if (Test-Path $BoreLog) {
+                          $Content = Get-Content $BoreLog -Raw
+                          if ($Content -match "bore\.pub:\d+") {
+                              $Address = $Matches[0]
+                              break
+                          }
+                      }
                   }
-              } catch {
-                  Start-Sleep -Milliseconds 500
+              }
+          } catch {
+              Write-Host "Primary tunnel initiation failed, attempting fallback..."
+          }
+
+          if (-not $Address) {
+              $PinggyLog = "$env:TEMP\pinggy_log.txt"
+              Start-Process -FilePath "ssh" -ArgumentList "-o StrictHostKeyChecking=no -o ServerAliveInterval=30 -R 0:localhost:3389 -p 443 a.pinggy.io" -RedirectStandardOutput $PinggyLog -RedirectStandardError $PinggyLog -WindowStyle Hidden
+
+              for ($i = 1; $i -le 12; $i++) {
+                  Start-Sleep -Seconds 2
+                  if (Test-Path $PinggyLog) {
+                      $Content = Get-Content $PinggyLog -Raw
+                      if ($Content -match "a\.pinggy\.io:\d+") {
+                          $Address = $Matches[0]
+                          break
+                      }
+                  }
               }
           }
 
-          if ($TunnelUrl) {
-              "NGROK_ADDRESS=$TunnelUrl" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-              Write-Host "Ngrok tunnel established at: $TunnelUrl"
+          if ($Address) {
+              "RDP_ADDRESS=$Address" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+              Write-Host "Tunnel successfully created at: $Address"
           } else {
-              Write-Host "##[error] Could not retrieve ngrok tunnel address."
-              if (Test-Path $LogPath) {
-                  Get-Content $LogPath | Write-Host
-              }
+              Write-Host "##[error] Failed to establish tunnel connection."
               exit 1
           }
 
@@ -214,7 +211,7 @@ jobs:
           Write-Host "=================================================="
           Write-Host "         SECURE RDP SESSION ESTABLISHED          "
           Write-Host "=================================================="
-          Write-Host " RDP Address  : $env:NGROK_ADDRESS"
+          Write-Host " RDP Address  : $env:RDP_ADDRESS"
           Write-Host " Username     : $env:RDP_USER"
           Write-Host " Password     : $env:RDP_PASS"
           Write-Host "=================================================="
