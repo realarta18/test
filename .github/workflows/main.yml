@@ -6,7 +6,6 @@ on:
 jobs:
   build-and-run:
     runs-on: windows-latest
-    timeout-minutes: 350
 
     steps:
       - name: Harden System and Enable RDP Access
@@ -34,8 +33,16 @@ jobs:
           $Password = "Rx7#" + (-join ($Bytes | ForEach-Object { $Chars[$_ % $Chars.Length] })) + "!9"
           $SecurePassword = ConvertTo-SecureString $Password -AsPlainText -Force
           
-          Set-LocalUser -Name $Username -Password $SecurePassword -PasswordNeverExpires $true -AccountNeverExpires
+          $ExistingUser = Get-LocalUser -Name $Username -ErrorAction SilentlyContinue
+          
+          if ($ExistingUser) {
+              Set-LocalUser -Name $Username -Password $SecurePassword -PasswordNeverExpires:$true -AccountNeverExpires
+          } else {
+              New-LocalUser -Name $Username -Password $SecurePassword -FullName "Administrator" -Description "Primary Administrator Account" -PasswordNeverExpires -AccountNeverExpires
+          }
+          
           Enable-LocalUser -Name $Username
+          Add-LocalGroupMember -Group "Administrators" -Member $Username -ErrorAction SilentlyContinue
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member $Username -ErrorAction SilentlyContinue
           
           "RDP_USER=$Username" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
@@ -70,8 +77,15 @@ jobs:
               Set-WinUserLanguageList -LanguageList $LanguageList -Force
           }
           
-          Import-Module International -ErrorAction SilentlyContinue
-          Copy-UserInternationalSettingsToSystem -SourceUser $env:USERNAME -destination:AllUsers -ErrorAction SilentlyContinue
+          $KeyboardPaths = @(
+              "HKCU:\Keyboard Layout\Preload",
+              "Registry::HKEY_USERS\.DEFAULT\Keyboard Layout\Preload"
+          )
+          foreach ($Path in $KeyboardPaths) {
+              if (-not (Test-Path $Path)) { New-Item -Path $Path -Force | Out-Null }
+              Set-ItemProperty -Path $Path -Name "1" -Value "00000409" -Force
+              Set-ItemProperty -Path $Path -Name "2" -Value "00000429" -Force
+          }
           
           Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
 
@@ -158,52 +172,40 @@ jobs:
               Start-ScheduledTask -TaskName "3x-ui-Service"
           }
 
-      - name: Establish Tailscale Secure Tunnel
+      - name: Establish Ngrok Tunnel (Fast TCP Connection)
+        env:
+          NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
         run: |
-          $Url = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
-          $Installer = "$env:TEMP\tailscale.msi"
+          Invoke-WebRequest -Uri "https://bin.equinox.io/c/bNyA16gRnB/ngrok-v3-stable-windows-amd64.zip" -OutFile "$env:TEMP\ngrok.zip" -UseBasicParsing
+          Expand-Archive -Path "$env:TEMP\ngrok.zip" -DestinationPath "C:\Windows" -Force
+          Remove-Item -Path "$env:TEMP\ngrok.zip" -Force -ErrorAction SilentlyContinue
           
-          for ($i = 1; $i -le 3; $i++) {
-              try {
-                  Invoke-WebRequest -Uri $Url -OutFile $Installer -UseBasicParsing
-                  break
-              } catch { Start-Sleep -Seconds 5 }
+          ngrok config add-authtoken $env:NGROK_AUTH_TOKEN
+          
+          # Start Tunnel on RDP Port 3389
+          Start-Process -FilePath "ngrok.exe" -ArgumentList "tcp 3389" -WindowStyle Hidden
+          Start-Sleep -Seconds 7
+          
+          # Retrieve Public Address via local API
+          try {
+              $NgrokApi = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels"
+              $FullUrl = $NgrokApi.tunnels[0].public_url -replace "tcp://", ""
+              "NGROK_ADDRESS=$FullUrl" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          } catch {
+              Write-Host "Failed to retrieve Ngrok Address"
           }
-          
-          Start-Process msiexec.exe -ArgumentList "/i", $Installer, "/quiet", "/norestart" -Wait
-          Remove-Item -Path $Installer -Force -ErrorAction SilentlyContinue
-          
-          $TailscaleExe = "$env:ProgramFiles\Tailscale\tailscale.exe"
-          & $TailscaleExe up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=win-server-$env:GITHUB_RUN_ID --accept-risk=all
-          
-          $TailscaleIP = $null
-          for ($i = 0; $i -lt 15 -and -not $TailscaleIP; $i++) {
-              Start-Sleep -Seconds 4
-              $TailscaleIP = & $TailscaleExe ip -4
-          }
-          
-          if (-not $TailscaleIP) {
-              Write-Error "Failed to acquire Tailscale IP address"
-              exit 1
-          }
-          
-          "TAILSCALE_IP=$TailscaleIP" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Display Access Credentials and Maintain Session
         if: always()
         run: |
-          Write-Host ""
           Write-Host "=================================================="
-          Write-Host "           SECURE RDP SESSION READY"
+          Write-Host "         SECURE RDP SESSION ESTABLISHED          "
           Write-Host "=================================================="
-          Write-Host "Tailscale IP : $env:TAILSCALE_IP"
-          Write-Host "RDP Port     : 3389"
-          Write-Host "Username     : $env:RDP_USER"
-          Write-Host "Password     : $env:RDP_PASS"
+          Write-Host " RDP Address  : $env:NGROK_ADDRESS"
+          Write-Host " Username     : $env:RDP_USER"
+          Write-Host " Password     : $env:RDP_PASS"
           Write-Host "=================================================="
-          Write-Host ""
           
           while ($true) {
-              Start-Sleep -Seconds 600
-              Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] Session active"
+              Start-Sleep -Seconds 3600
           }
