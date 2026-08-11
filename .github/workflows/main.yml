@@ -176,23 +176,75 @@ jobs:
         env:
           NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
         run: |
-          Invoke-WebRequest -Uri "https://bin.equinox.io/c/bNyA16gRnB/ngrok-v3-stable-windows-amd64.zip" -OutFile "$env:TEMP\ngrok.zip" -UseBasicParsing
-          Expand-Archive -Path "$env:TEMP\ngrok.zip" -DestinationPath "C:\Windows" -Force
-          Remove-Item -Path "$env:TEMP\ngrok.zip" -Force -ErrorAction SilentlyContinue
-          
-          ngrok config add-authtoken $env:NGROK_AUTH_TOKEN
-          
-          # Start Tunnel on RDP Port 3389
-          Start-Process -FilePath "ngrok.exe" -ArgumentList "tcp 3389" -WindowStyle Hidden
-          Start-Sleep -Seconds 7
-          
-          # Retrieve Public Address via local API
-          try {
-              $NgrokApi = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels"
-              $FullUrl = $NgrokApi.tunnels[0].public_url -replace "tcp://", ""
-              "NGROK_ADDRESS=$FullUrl" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          } catch {
-              Write-Host "Failed to retrieve Ngrok Address"
+          $NgrokDir = "C:\ngrok"
+          New-Item -Path $NgrokDir -ItemType Directory -Force | Out-Null
+          $ZipPath = "$env:TEMP\ngrok.zip"
+
+          # Official, currently-valid download URL (v3)
+          $Url = "https://ngrok-agent.s3.amazonaws.com/ngrok-v3-stable-windows-amd64.zip"
+
+          $Downloaded = $false
+          for ($i = 1; $i -le 5; $i++) {
+              try {
+                  Invoke-WebRequest -Uri $Url -OutFile $ZipPath -UseBasicParsing
+                  if ((Test-Path $ZipPath) -and ((Get-Item $ZipPath).Length -gt 1000000)) {
+                      $Downloaded = $true
+                      break
+                  }
+              } catch {
+                  Write-Host "Attempt $i failed: $_"
+              }
+              Start-Sleep -Seconds 5
+          }
+
+          if (-not $Downloaded) {
+              Write-Host "##[error] Failed to download ngrok after multiple attempts."
+              exit 1
+          }
+
+          Expand-Archive -Path $ZipPath -DestinationPath $NgrokDir -Force
+          Remove-Item -Path $ZipPath -Force -ErrorAction SilentlyContinue
+
+          $NgrokExe = Get-ChildItem -Path $NgrokDir -Filter "ngrok.exe" -Recurse | Select-Object -First 1 -ExpandProperty FullName
+
+          if (-not $NgrokExe) {
+              Write-Host "##[error] ngrok.exe not found after extraction."
+              exit 1
+          }
+
+          if ([string]::IsNullOrWhiteSpace($env:NGROK_AUTH_TOKEN)) {
+              Write-Host "##[error] NGROK_AUTH_TOKEN secret is empty. Add it in repo Settings -> Secrets."
+              exit 1
+          }
+
+          & $NgrokExe config add-authtoken $env:NGROK_AUTH_TOKEN
+
+          # Start tunnel in background
+          Start-Process -FilePath $NgrokExe -ArgumentList "tcp 3389 --log=stdout" -WindowStyle Hidden -RedirectStandardOutput "$env:TEMP\ngrok_log.txt"
+
+          # Poll the local API until tunnel is ready (up to ~60s)
+          $TunnelUrl = $null
+          for ($i = 1; $i -le 12; $i++) {
+              Start-Sleep -Seconds 5
+              try {
+                  $NgrokApi = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -ErrorAction Stop
+                  if ($NgrokApi.tunnels.Count -gt 0) {
+                      $TunnelUrl = $NgrokApi.tunnels[0].public_url -replace "tcp://", ""
+                      break
+                  }
+              } catch {
+                  Write-Host "Waiting for ngrok API... ($i/12)"
+              }
+          }
+
+          if ($TunnelUrl) {
+              "NGROK_ADDRESS=$TunnelUrl" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+              Write-Host "Ngrok tunnel established at: $TunnelUrl"
+          } else {
+              Write-Host "##[error] Could not retrieve ngrok tunnel address. Check $env:TEMP\ngrok_log.txt for details."
+              if (Test-Path "$env:TEMP\ngrok_log.txt") {
+                  Get-Content "$env:TEMP\ngrok_log.txt" | Write-Host
+              }
           }
 
       - name: Display Access Credentials and Maintain Session
