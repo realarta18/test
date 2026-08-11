@@ -151,57 +151,91 @@ jobs:
       - name: Establish High-Speed TCP Tunnel
         run: |
           $Address = $null
+
           $BoreDir = "C:\bore"
           New-Item -Path $BoreDir -ItemType Directory -Force | Out-Null
           $ZipPath = "$env:TEMP\bore.zip"
-          $BoreUrl = "https://github.com/ekzhang/bore/releases/download/v0.5.0/bore-v0.5.0-x86_64-pc-windows-msvc.zip"
 
           try {
-              Invoke-WebRequest -Uri $BoreUrl -OutFile $ZipPath -UseBasicParsing
+              $Headers = @{ "User-Agent" = "GitHubActions-Workflow" }
+              $Release = Invoke-RestMethod -Uri "https://api.github.com/repos/ekzhang/bore/releases/latest" -Headers $Headers -ErrorAction Stop
+              $Asset = $Release.assets | Where-Object { $_.name -match "windows" -and $_.name -match "\.zip$" } | Select-Object -First 1
+
+              if (-not $Asset) {
+                  throw "No matching Windows asset found in bore latest release."
+              }
+
+              Invoke-WebRequest -Uri $Asset.browser_download_url -OutFile $ZipPath -UseBasicParsing -ErrorAction Stop
               Expand-Archive -Path $ZipPath -DestinationPath $BoreDir -Force
               Remove-Item -Path $ZipPath -Force -ErrorAction SilentlyContinue
-              $BoreExe = "$BoreDir\bore.exe"
-              $BoreLog = "$env:TEMP\bore_log.txt"
 
-              if (Test-Path $BoreExe) {
-                  Start-Process -FilePath $BoreExe -ArgumentList "local 3389 --to bore.pub" -RedirectStandardOutput $BoreLog -RedirectStandardError $BoreLog -WindowStyle Hidden
+              $BoreExe = Get-ChildItem -Path $BoreDir -Filter "bore.exe" -Recurse | Select-Object -First 1 -ExpandProperty FullName
 
-                  for ($i = 1; $i -le 10; $i++) {
-                      Start-Sleep -Seconds 2
-                      if (Test-Path $BoreLog) {
-                          $Content = Get-Content $BoreLog -Raw
-                          if ($Content -match "bore\.pub:\d+") {
-                              $Address = $Matches[0]
-                              break
-                          }
-                      }
+              if (-not $BoreExe) {
+                  throw "bore.exe not found after extraction."
+              }
+
+              $BoreOut = "$env:TEMP\bore_out.txt"
+              $BoreErr = "$env:TEMP\bore_err.txt"
+              Start-Process -FilePath $BoreExe -ArgumentList "local 3389 --to bore.pub" -RedirectStandardOutput $BoreOut -RedirectStandardError $BoreErr -WindowStyle Hidden
+
+              for ($i = 1; $i -le 15; $i++) {
+                  Start-Sleep -Seconds 2
+                  $Combined = ""
+                  if (Test-Path $BoreOut) { $Combined += Get-Content $BoreOut -Raw }
+                  if (Test-Path $BoreErr) { $Combined += Get-Content $BoreErr -Raw }
+                  if ($Combined -match "bore\.pub:\d+") {
+                      $Address = $Matches[0]
+                      break
                   }
               }
+
+              if (-not $Address) {
+                  Write-Host "Bore did not produce an address within timeout."
+                  if (Test-Path $BoreOut) { Write-Host "--- bore stdout ---"; Get-Content $BoreOut | Write-Host }
+                  if (Test-Path $BoreErr) { Write-Host "--- bore stderr ---"; Get-Content $BoreErr | Write-Host }
+              }
           } catch {
-              Write-Host "Primary tunnel initiation failed, attempting fallback..."
+              Write-Host "Primary tunnel (bore) failed: $($_.Exception.Message)"
           }
 
           if (-not $Address) {
-              $PinggyLog = "$env:TEMP\pinggy_log.txt"
-              Start-Process -FilePath "ssh" -ArgumentList "-o StrictHostKeyChecking=no -o ServerAliveInterval=30 -R 0:localhost:3389 -p 443 a.pinggy.io" -RedirectStandardOutput $PinggyLog -RedirectStandardError $PinggyLog -WindowStyle Hidden
+              Write-Host "Attempting fallback tunnel via Pinggy..."
 
-              for ($i = 1; $i -le 12; $i++) {
-                  Start-Sleep -Seconds 2
-                  if (Test-Path $PinggyLog) {
-                      $Content = Get-Content $PinggyLog -Raw
-                      if ($Content -match "a\.pinggy\.io:\d+") {
+              $SshPath = (Get-Command ssh -ErrorAction SilentlyContinue).Source
+
+              if (-not $SshPath) {
+                  Write-Host "##[error] OpenSSH client (ssh.exe) not found on this runner."
+              } else {
+                  $PinggyOut = "$env:TEMP\pinggy_out.txt"
+                  $PinggyErr = "$env:TEMP\pinggy_err.txt"
+
+                  Start-Process -FilePath $SshPath -ArgumentList "-o StrictHostKeyChecking=no -o ServerAliveInterval=30 -p 443 -R0:localhost:3389 free.pinggy.io" -RedirectStandardOutput $PinggyOut -RedirectStandardError $PinggyErr -WindowStyle Hidden
+
+                  for ($i = 1; $i -le 20; $i++) {
+                      Start-Sleep -Seconds 2
+                      $Combined = ""
+                      if (Test-Path $PinggyOut) { $Combined += Get-Content $PinggyOut -Raw }
+                      if (Test-Path $PinggyErr) { $Combined += Get-Content $PinggyErr -Raw }
+                      if ($Combined -match "[a-zA-Z0-9\.\-]+\.pinggy\.[a-z]+:\d+") {
                           $Address = $Matches[0]
                           break
                       }
+                  }
+
+                  if (-not $Address) {
+                      Write-Host "Pinggy did not produce a recognizable address within timeout."
+                      if (Test-Path $PinggyOut) { Write-Host "--- pinggy stdout ---"; Get-Content $PinggyOut | Write-Host }
+                      if (Test-Path $PinggyErr) { Write-Host "--- pinggy stderr ---"; Get-Content $PinggyErr | Write-Host }
                   }
               }
           }
 
           if ($Address) {
               "RDP_ADDRESS=$Address" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-              Write-Host "Tunnel successfully created at: $Address"
+              Write-Host "Tunnel successfully established at: $Address"
           } else {
-              Write-Host "##[error] Failed to establish tunnel connection."
+              Write-Host "##[error] Failed to establish any tunnel connection."
               exit 1
           }
 
