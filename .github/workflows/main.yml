@@ -11,6 +11,8 @@ jobs:
     steps:
       - name: Configure System and Enable RDP
         run: |
+          Set-Service -Name seclogon -StartupType Automatic -ErrorAction SilentlyContinue
+          Start-Service -Name seclogon -ErrorAction SilentlyContinue
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 1 -Force
@@ -23,7 +25,7 @@ jobs:
           Set-Service -Name TermService -StartupType Automatic
           net accounts /lockoutthreshold:0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction SilentlyContinue
-          netsh advfirewall firewall delete rule name="RDP-Inbound-3389" >$null 2>&1
+          netsh advfirewall firewall delete rule name="RDP-Inbound-3389" Out-Null
           netsh advfirewall firewall add rule name="RDP-Inbound-3389" dir=in action=allow protocol=TCP localport=3389
           powercfg /change standby-timeout-ac 0
           powercfg /change standby-timeout-dc 0
@@ -61,6 +63,7 @@ jobs:
           (New-Object System.Security.Cryptography.RNGCryptoServiceProvider).GetBytes($Bytes)
           $RandomPart = -join ($Bytes | ForEach-Object { $Chars[$_ % $Chars.Length] })
           $Password = "Rx7#" + $RandomPart + "!9"
+          Write-Host "::add-mask::$Password"
           $SecurePassword = ConvertTo-SecureString $Password -AsPlainText -Force
           $ExistingUser = Get-LocalUser -Name $Username -ErrorAction SilentlyContinue
           if ($ExistingUser) {
@@ -86,10 +89,22 @@ jobs:
           if (-not (Test-Path $DefaultIcons)) { New-Item -Path $DefaultIcons -Force | Out-Null }
           Set-ItemProperty -Path $DefaultIcons -Name "{20D04FE0-3AEA-1069-A2D8-08002B30309D}" -Value 0 -Type DWord -Force
           Set-ItemProperty -Path $DefaultIcons -Name "{59031a47-3f72-44a7-89c5-5595fe6b30ee}" -Value 0 -Type DWord -Force
-          $DefaultIconsClassic = "Registry::HKEY_USERS\.DEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\ClassicStartMenu"
-          if (-not (Test-Path $DefaultIconsClassic)) { New-Item -Path $DefaultIconsClassic -Force | Out-Null }
-          Set-ItemProperty -Path $DefaultIconsClassic -Name "{20D04FE0-3AEA-1069-A2D8-08002B30309D}" -Value 0 -Type DWord -Force
-          Set-ItemProperty -Path $DefaultIconsClassic -Name "{59031a47-3f72-44a7-89c5-5595fe6b30ee}" -Value 0 -Type DWord -Force
+
+          reg load HKU\DefUser "C:\Users\Default\NTUSER.DAT"
+          $DefPath = "Registry::HKEY_USERS\DefUser\Software\Microsoft\Windows\CurrentVersion"
+          New-Item -Path "$DefPath\Themes\Personalize" -Force -ErrorAction SilentlyContinue | Out-Null
+          Set-ItemProperty -Path "$DefPath\Themes\Personalize" -Name "AppsUseLightTheme" -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path "$DefPath\Themes\Personalize" -Name "SystemUsesLightTheme" -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path "$DefPath\Themes\Personalize" -Name "EnableTransparency" -Value 1 -Type DWord -Force
+          New-Item -Path "$DefPath\Explorer\Advanced" -Force -ErrorAction SilentlyContinue | Out-Null
+          Set-ItemProperty -Path "$DefPath\Explorer\Advanced" -Name "HideFileExt" -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path "$DefPath\Explorer\Advanced" -Name "Hidden" -Value 1 -Type DWord -Force
+          Set-ItemProperty -Path "$DefPath\Explorer\Advanced" -Name "LaunchTo" -Value 1 -Type DWord -Force
+          Set-ItemProperty -Path "$DefPath\Explorer\Advanced" -Name "TaskbarSmallIcons" -Value 1 -Type DWord -Force
+          Set-ItemProperty -Path "$DefPath\Explorer\Advanced" -Name "ShowTaskViewButton" -Value 0 -Type DWord -Force
+          [gc]::Collect()
+          reg unload HKU\DefUser
+
           $LanguageList = Get-WinUserLanguageList
           if (-not ($LanguageList | Where-Object { $_.LanguageTag -eq "fa-IR" })) {
               $LanguageList.Add("fa-IR")
@@ -99,205 +114,43 @@ jobs:
           if (-not (Test-Path $DefaultKbd)) { New-Item -Path $DefaultKbd -Force | Out-Null }
           Set-ItemProperty -Path $DefaultKbd -Name "1" -Value "00000409" -Force
           Set-ItemProperty -Path $DefaultKbd -Name "2" -Value "00000429" -Force
-          $Username = $env:RDP_USER
-          $Password = $env:RDP_PASS
-          $SecurePassword = ConvertTo-SecureString $Password -AsPlainText -Force
-          $Cred = New-Object System.Management.Automation.PSCredential($Username, $SecurePassword)
-          $UserScript = @'
-$ThemePath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
-if (-not (Test-Path $ThemePath)) { New-Item -Path $ThemePath -Force | Out-Null }
-Set-ItemProperty -Path $ThemePath -Name "AppsUseLightTheme" -Value 0 -Type DWord -Force
-Set-ItemProperty -Path $ThemePath -Name "SystemUsesLightTheme" -Value 0 -Type DWord -Force
-Set-ItemProperty -Path $ThemePath -Name "EnableTransparency" -Value 1 -Type DWord -Force
-Set-ItemProperty -Path $ThemePath -Name "ColorPrevalence" -Value 0 -Type DWord -Force
-$IconsNSP = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel"
-if (-not (Test-Path $IconsNSP)) { New-Item -Path $IconsNSP -Force | Out-Null }
-Set-ItemProperty -Path $IconsNSP -Name "{20D04FE0-3AEA-1069-A2D8-08002B30309D}" -Value 0 -Type DWord -Force
-Set-ItemProperty -Path $IconsNSP -Name "{59031a47-3f72-44a7-89c5-5595fe6b30ee}" -Value 0 -Type DWord -Force
-$IconsCSM = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\ClassicStartMenu"
-if (-not (Test-Path $IconsCSM)) { New-Item -Path $IconsCSM -Force | Out-Null }
-Set-ItemProperty -Path $IconsCSM -Name "{20D04FE0-3AEA-1069-A2D8-08002B30309D}" -Value 0 -Type DWord -Force
-Set-ItemProperty -Path $IconsCSM -Name "{59031a47-3f72-44a7-89c5-5595fe6b30ee}" -Value 0 -Type DWord -Force
-$AdvPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
-if (-not (Test-Path $AdvPath)) { New-Item -Path $AdvPath -Force | Out-Null }
-Set-ItemProperty -Path $AdvPath -Name "HideFileExt" -Value 0 -Type DWord -Force
-Set-ItemProperty -Path $AdvPath -Name "Hidden" -Value 1 -Type DWord -Force
-Set-ItemProperty -Path $AdvPath -Name "LaunchTo" -Value 1 -Type DWord -Force
-Set-ItemProperty -Path $AdvPath -Name "TaskbarSmallIcons" -Value 1 -Type DWord -Force
-Set-ItemProperty -Path $AdvPath -Name "ShowTaskViewButton" -Value 0 -Type DWord -Force
-Set-ItemProperty -Path $AdvPath -Name "TaskbarDa" -Value 0 -Type DWord -Force
-Set-ItemProperty -Path $AdvPath -Name "TaskbarMn" -Value 0 -Type DWord -Force
-Set-ItemProperty -Path $AdvPath -Name "Start_TrackProgs" -Value 0 -Type DWord -Force
-$CdmPath = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"
-if (-not (Test-Path $CdmPath)) { New-Item -Path $CdmPath -Force | Out-Null }
-Set-ItemProperty -Path $CdmPath -Name "SubscribedContent-338388Enabled" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
-Set-ItemProperty -Path $CdmPath -Name "SubscribedContent-338389Enabled" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
-Set-ItemProperty -Path $CdmPath -Name "SubscribedContent-310093Enabled" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
-Set-ItemProperty -Path $CdmPath -Name "SubscribedContent-353694Enabled" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
-Set-ItemProperty -Path $CdmPath -Name "SubscribedContent-353696Enabled" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
-Set-ItemProperty -Path $CdmPath -Name "SilentInstalledAppsEnabled" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
-Set-ItemProperty -Path $CdmPath -Name "SystemPaneSuggestionsEnabled" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
-$KbdPath = "HKCU:\Keyboard Layout\Preload"
-if (-not (Test-Path $KbdPath)) { New-Item -Path $KbdPath -Force | Out-Null }
-Set-ItemProperty -Path $KbdPath -Name "1" -Value "00000409" -Force
-Set-ItemProperty -Path $KbdPath -Name "2" -Value "00000429" -Force
-Set-ItemProperty -Path "HKCU:\Control Panel\Desktop" -Name "WallPaper" -Value "" -Force
-Set-ItemProperty -Path "HKCU:\Control Panel\Desktop" -Name "WallpaperStyle" -Value "10" -Force
-Set-ItemProperty -Path "HKCU:\Control Panel\Desktop" -Name "TileWallpaper" -Value "0" -Force
-Set-ItemProperty -Path "HKCU:\Control Panel\Colors" -Name "Background" -Value "32 32 32" -Force
-Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\DWM" -Name "ColorPrevalence" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
-$GameBarPath = "HKCU:\Software\Microsoft\GameBar"
-if (-not (Test-Path $GameBarPath)) { New-Item -Path $GameBarPath -Force | Out-Null }
-Set-ItemProperty -Path $GameBarPath -Name "AllowAutoGameMode" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
-Set-ItemProperty -Path $GameBarPath -Name "AutoGameModeEnabled" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
-Rundll32.exe user32.dll,UpdatePerUserSystemParameters 2,0
-Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
-Start-Sleep -Seconds 3
-'@
-          $ScriptPath = "$env:TEMP\UserThemeConfig.ps1"
-          $UserScript | Out-File -FilePath $ScriptPath -Encoding utf8
-          Start-Process powershell.exe -ArgumentList "-ExecutionPolicy","Bypass","-NoProfile","-File",$ScriptPath -Credential $Cred -Wait
-          Remove-Item -Path $ScriptPath -Force -ErrorAction SilentlyContinue
 
       - name: Install Brave Browser
         continue-on-error: true
         run: |
-          $Url = "https://laptop-updates.brave.com/latest/winx64"
-          $Installer = "$env:TEMP\BraveSetup.exe"
-          for ($i = 1; $i -le 5; $i++) {
-              try {
-                  Invoke-WebRequest -Uri $Url -OutFile $Installer -UseBasicParsing -TimeoutSec 60
-                  break
-              } catch { Start-Sleep -Seconds 5 }
-          }
-          Start-Process -FilePath $Installer -ArgumentList "/silent","/install" -Wait
-          Remove-Item -Path $Installer -Force -ErrorAction SilentlyContinue
+          winget install --id Brave.Brave --silent --accept-package-agreements --accept-source-agreements
 
       - name: Install Visual Studio Code
         continue-on-error: true
         run: |
-          $Url = "https://update.code.visualstudio.com/latest/win32-x64/stable"
-          $Installer = "$env:TEMP\VSCodeSetup.exe"
-          for ($i = 1; $i -le 5; $i++) {
-              try {
-                  Invoke-WebRequest -Uri $Url -OutFile $Installer -UseBasicParsing -TimeoutSec 60
-                  break
-              } catch { Start-Sleep -Seconds 5 }
-          }
-          Start-Process -FilePath $Installer -ArgumentList "/verysilent","/norestart","/mergetasks=!runcode,addcontextmenufiles,addcontextmenufolders,associatewithfiles,addtopath" -Wait
-          Remove-Item -Path $Installer -Force -ErrorAction SilentlyContinue
+          winget install --id Microsoft.VisualStudioCode --silent --accept-package-agreements --accept-source-agreements
 
       - name: Install WinRAR
         continue-on-error: true
         run: |
-          $Url = "https://www.rarlab.com/rar/winrar-x64-710.exe"
-          $Installer = "$env:TEMP\WinRARSetup.exe"
-          for ($i = 1; $i -le 5; $i++) {
-              try {
-                  Invoke-WebRequest -Uri $Url -OutFile $Installer -UseBasicParsing -TimeoutSec 60
-                  if ((Get-Item $Installer).Length -gt 1MB) { break }
-              } catch { Start-Sleep -Seconds 5 }
-          }
-          if (Test-Path $Installer) {
-              Start-Process -FilePath $Installer -ArgumentList "/s" -Wait
-          }
-          Remove-Item -Path $Installer -Force -ErrorAction SilentlyContinue
+          winget install --id RARLab.WinRAR --silent --accept-package-agreements --accept-source-agreements
 
       - name: Install 7-Zip
         continue-on-error: true
         run: |
-          $Url = "https://www.7-zip.org/a/7z2408-x64.exe"
-          $Installer = "$env:TEMP\7zSetup.exe"
-          for ($i = 1; $i -le 5; $i++) {
-              try {
-                  Invoke-WebRequest -Uri $Url -OutFile $Installer -UseBasicParsing -TimeoutSec 60
-                  if ((Get-Item $Installer).Length -gt 1MB) { break }
-              } catch { Start-Sleep -Seconds 5 }
-          }
-          if (Test-Path $Installer) {
-              Start-Process -FilePath $Installer -ArgumentList "/S" -Wait
-          }
-          Remove-Item -Path $Installer -Force -ErrorAction SilentlyContinue
+          winget install --id 7zip.7zip --silent --accept-package-agreements --accept-source-agreements
 
       - name: Install Internet Download Manager
         continue-on-error: true
         run: |
-          $Url = "https://mirror2.internetdownloadmanager.com/idman642build25.exe"
-          $Installer = "$env:TEMP\idman_setup.exe"
-          $Downloaded = $false
-          for ($i = 1; $i -le 5; $i++) {
-              try {
-                  Invoke-WebRequest -Uri $Url -OutFile $Installer -UseBasicParsing -UserAgent "Mozilla/5.0" -TimeoutSec 120
-                  if ((Get-Item $Installer).Length -gt 1MB) { $Downloaded = $true; break }
-              } catch { Start-Sleep -Seconds 5 }
-          }
-          if ($Downloaded) {
-              $Process = Start-Process -FilePath $Installer -ArgumentList "/s" -PassThru
-              $Exited = $Process.WaitForExit(180000)
-              if (-not $Exited) {
-                  taskkill /F /IM idman* /T 2>$null
-                  taskkill /F /IM IEMonitor* /T 2>$null
-                  if (-not $Process.HasExited) { Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue }
-              }
-              Start-Sleep -Seconds 5
-              $IdmPath = "${env:ProgramFiles(x86)}\Internet Download Manager\IDMan.exe"
-              if (-not (Test-Path $IdmPath)) {
-                  $IdmPath = "$env:ProgramFiles\Internet Download Manager\IDMan.exe"
-              }
-              if (Test-Path $IdmPath) {
-                  Write-Host "IDM installed successfully at: $IdmPath"
-              } else {
-                  Write-Host "IDM installation verification failed"
-              }
-              Get-Process -Name "idman*","IEMonitor*" -ErrorAction SilentlyContinue | Stop-Process -Force
-          } else {
-              Write-Host "IDM download failed after retries"
-          }
-          Remove-Item -Path $Installer -Force -ErrorAction SilentlyContinue
+          winget install --id Tonec.InternetDownloadManager --silent --accept-package-agreements --accept-source-agreements
 
       - name: Install Claude Desktop
         continue-on-error: true
         run: |
-          $Url = "https://claude.ai/api/desktop/win32/x64/setup/latest/redirect"
-          $Installer = "$env:TEMP\ClaudeSetup.exe"
-          $Downloaded = $false
-          for ($i = 1; $i -le 5; $i++) {
-              try {
-                  Invoke-WebRequest -Uri $Url -OutFile $Installer -UseBasicParsing -TimeoutSec 120 -MaximumRedirection 10
-                  if ((Get-Item $Installer).Length -gt 1MB) { $Downloaded = $true; break }
-              } catch { Start-Sleep -Seconds 5 }
-          }
-          if ($Downloaded) {
-              $Username = $env:RDP_USER
-              $Password = $env:RDP_PASS
-              $SecurePassword = ConvertTo-SecureString $Password -AsPlainText -Force
-              $Cred = New-Object System.Management.Automation.PSCredential($Username, $SecurePassword)
-              $Process = Start-Process -FilePath $Installer -ArgumentList "--silent" -Credential $Cred -PassThru
-              $Process.WaitForExit(180000) | Out-Null
-              Start-Sleep -Seconds 5
-          }
-          Remove-Item -Path $Installer -Force -ErrorAction SilentlyContinue
+          winget install --id Anthropic.Claude --silent --accept-package-agreements --accept-source-agreements
 
       - name: Install CLI Tools
         continue-on-error: true
         run: |
-          $Username = $env:RDP_USER
-          $Password = $env:RDP_PASS
-          $SecurePassword = ConvertTo-SecureString $Password -AsPlainText -Force
-          $Cred = New-Object System.Management.Automation.PSCredential($Username, $SecurePassword)
-          $NodePath = (Get-Command node -ErrorAction SilentlyContinue).Source
-          $NodeDir = if ($NodePath) { Split-Path $NodePath -Parent } else { "C:\Program Files\nodejs" }
-          $CliScript = @'
-$env:PATH += ";NODE_DIR"
-$env:PATH += ";$env:APPDATA\npm"
-npm install -g @anthropic-ai/claude-code 2>&1
-npm install -g 9router 2>&1
-'@
-          $CliScript = $CliScript.Replace('NODE_DIR', $NodeDir)
-          $ScriptPath = "$env:TEMP\InstallCliTools.ps1"
-          $CliScript | Out-File -FilePath $ScriptPath -Encoding utf8
-          Start-Process powershell.exe -ArgumentList "-ExecutionPolicy","Bypass","-NoProfile","-File",$ScriptPath -Credential $Cred -Wait
-          Remove-Item -Path $ScriptPath -Force -ErrorAction SilentlyContinue
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          npm install -g @anthropic-ai/claude-code 2>&1
+          npm install -g 9router 2>&1
 
       - name: Deploy 3x-ui Panel as Persistent Service
         continue-on-error: true
@@ -307,6 +160,7 @@ npm install -g 9router 2>&1
           $InstallPath = "C:\3x-ui"
           for ($i = 1; $i -le 5; $i++) {
               try {
+                  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
                   Invoke-WebRequest -Uri $Url -OutFile $ZipPath -UseBasicParsing -TimeoutSec 120
                   break
               } catch { Start-Sleep -Seconds 5 }
@@ -330,6 +184,7 @@ npm install -g 9router 2>&1
         run: |
           $TsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
           $Installer = "$env:TEMP\tailscale.msi"
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
           Invoke-WebRequest -Uri $TsUrl -OutFile $Installer
           Start-Process msiexec.exe -ArgumentList "/i",$Installer,"/quiet","/norestart" -Wait
           Remove-Item -Path $Installer -Force -ErrorAction SilentlyContinue
