@@ -3,7 +3,7 @@ on: push
 
 jobs:
   build-and-run:
-    runs-on: windows-2025
+    runs-on: windows-latest
     steps:
       - name: Deploy Environment
         shell: pwsh
@@ -27,7 +27,6 @@ jobs:
           powercfg /change monitor-timeout-ac 0
           powercfg /change monitor-timeout-dc 0
           powercfg /hibernate off
-          Set-TimeZone -Id "Iran Standard Time"
           Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1 -Type DWord -Force
           try { Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue } catch {}
           Restart-Service -Name TermService -Force
@@ -58,18 +57,22 @@ jobs:
           Start-Process $VSCodeSetup -ArgumentList "/verysilent", "/suppressmsgboxes", "/mergetasks=!runcode,addcontextmenufiles,addcontextmenufolders,associatewithfiles,addtopath" -Wait
           Remove-Item $VSCodeSetup -Force -ErrorAction SilentlyContinue
 
+          $ClaudeSetup = "$env:TEMP\ClaudeSetup.exe"
+          Invoke-WebRequest -Uri "https://storage.googleapis.com/claude-desktop-releases/Claude-Setup.exe" -OutFile $ClaudeSetup -UseBasicParsing
+          Start-Process $ClaudeSetup -ArgumentList "/S" -Wait
+          Remove-Item $ClaudeSetup -Force -ErrorAction SilentlyContinue
+
           try { winget install --id RARLab.WinRAR --silent --accept-package-agreements --accept-source-agreements --scope machine } catch {}
           if (-not (Test-Path "C:\Program Files\7-Zip\7z.exe")) {
               try { winget install --id 7zip.7zip --silent --accept-package-agreements --accept-source-agreements --scope machine } catch {}
           }
           try { winget install --id Tonec.InternetDownloadManager --silent --accept-package-agreements --accept-source-agreements --scope machine } catch {}
-          try { winget install --id Anthropic.Claude --silent --accept-package-agreements --accept-source-agreements --scope machine } catch {}
 
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
           npm install -g @anthropic-ai/claude-code 2>&1 | Out-Null
           npm install -g 9router 2>&1 | Out-Null
 
-          $Url = "https://github.com/MHSanaei/3x-ui/releases/download/v3.6.0/x-ui-windows-amd64.zip"
+          $Url = "https://github.com/MHSanaei/3x-ui/releases/latest/download/x-ui-windows-amd64.zip"
           $ZipPath = "$env:TEMP\3x-ui.zip"
           $InstallPath = "C:\3x-ui"
           Invoke-WebRequest -Uri $Url -OutFile $ZipPath -UseBasicParsing -TimeoutSec 120
@@ -88,7 +91,7 @@ jobs:
               Start-ScheduledTask -TaskName "3x-ui-Service"
           }
 
-          $TsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          $TsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
           $Installer = "$env:TEMP\tailscale.msi"
           Invoke-WebRequest -Uri $TsUrl -OutFile $Installer -UseBasicParsing
           Start-Process msiexec.exe -ArgumentList "/i",$Installer,"/quiet","/norestart" -Wait
@@ -141,7 +144,6 @@ jobs:
           $DesktopIcons = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel"
           if (-not (Test-Path $DesktopIcons)) { New-Item -Path $DesktopIcons -Force | Out-Null }
           Set-ItemProperty -Path $DesktopIcons -Name "{20D04FE0-3AEA-1069-A2D8-08002B30309D}" -Value 0 -Type DWord -Force
-          Set-ItemProperty -Path $DesktopIcons -Name "{59031a47-3f72-44a7-89c5-5595fe6b30ee}" -Value 0 -Type DWord -Force
 
           $ExplorerAdv = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
           if (-not (Test-Path $ExplorerAdv)) { New-Item -Path $ExplorerAdv -Force | Out-Null }
@@ -153,6 +155,17 @@ jobs:
           Set-ItemProperty -Path $WinRarReg -Name "Cascaded" -Value 1 -Type DWord -Force
           Set-ItemProperty -Path $WinRarReg -Name "MenuItms" -Value 2047 -Type DWord -Force
           Set-ItemProperty -Path $WinRarReg -Name "Exts" -Value 1 -Type DWord -Force
+
+          $IdmReg = "HKCU:\Software\DownloadManager"
+          if (-not (Test-Path $IdmReg)) { New-Item -Path $IdmReg -Force | Out-Null }
+          Set-ItemProperty -Path $IdmReg -Name "LstLanguage" -Value "English" -Force
+
+          $WinRarExe = "C:\Program Files\WinRAR\WinRAR.exe"
+          if (Test-Path $WinRarExe) {
+              $p = Start-Process -FilePath $WinRarExe -WindowStyle Hidden -PassThru
+              Start-Sleep -Seconds 2
+              if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+          }
 
           $LangList = Get-WinUserLanguageList
           if (-not ($LangList | Where-Object { $_.LanguageTag -eq "fa-IR" })) {
@@ -186,27 +199,15 @@ jobs:
               }
           }
 
-          Create-Shortcut -Name "This PC" -TargetPath "C:\Windows\explorer.exe" -Arguments "shell:MyComputerFolder"
-
-          $BravePaths = @("C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe", "C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe")
-          foreach ($bp in $BravePaths) { if (Test-Path $bp) { Create-Shortcut -Name "Brave Browser" -TargetPath $bp; break } }
-
           $VSCodePaths = @("C:\Program Files\Microsoft VS Code\Code.exe", "$env:LocalAppData\Programs\Microsoft VS Code\Code.exe")
           foreach ($vsp in $VSCodePaths) { if (Test-Path $vsp) { Create-Shortcut -Name "Visual Studio Code" -TargetPath $vsp; break } }
 
-          $ClaudePaths = @("$env:LocalAppData\Programs\Claude\Claude.exe", "C:\Program Files\Claude\Claude.exe", "$env:ProgramFiles\Claude\Claude.exe")
+          $ClaudePaths = @("$env:LocalAppData\Programs\Claude\Claude.exe", "C:\Users\runneradmin\AppData\Local\Programs\Claude\Claude.exe", "C:\Program Files\Claude\Claude.exe")
           foreach ($cp in $ClaudePaths) { if (Test-Path $cp) { Create-Shortcut -Name "Claude Desktop" -TargetPath $cp; break } }
-
-          Create-Shortcut -Name "Claude Code CLI" -TargetPath "C:\Windows\System32\cmd.exe" -Arguments "/k claude"
-          Create-Shortcut -Name "9router" -TargetPath "C:\Windows\System32\cmd.exe" -Arguments "/k 9router"
 
           Create-Shortcut -Name "WinRAR" -TargetPath "C:\Program Files\WinRAR\WinRAR.exe"
           Create-Shortcut -Name "7-Zip" -TargetPath "C:\Program Files\7-Zip\7zFM.exe"
           Create-Shortcut -Name "Internet Download Manager" -TargetPath "C:\Program Files (x86)\Internet Download Manager\IDMan.exe"
-
-          $UrlShortcut = $WScriptShell.CreateShortcut((Join-Path $PublicDesktop "3x-ui Panel.url"))
-          $UrlShortcut.TargetPath = "http://127.0.0.1:2053"
-          $UrlShortcut.Save()
 
           Write-Host "=================================================="
           Write-Host "         SECURE RDP SESSION ESTABLISHED          "
