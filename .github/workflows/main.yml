@@ -10,6 +10,8 @@ jobs:
         env:
           TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
         run: |
+          $ProgressPreference = 'SilentlyContinue'
+  
           Set-Service -Name seclogon -StartupType Automatic -ErrorAction SilentlyContinue
           Start-Service -Name seclogon -ErrorAction SilentlyContinue
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
@@ -21,7 +23,7 @@ jobs:
           Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name "EnableLUA" -Value 0 -Force
           Set-Service -Name TermService -StartupType Automatic
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction SilentlyContinue
-          New-NetFirewallRule -DisplayName "RDP-Inbound-3389" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 3389 -ErrorAction SilentlyContinue
+          New-NetFirewallRule -DisplayName "RDP-Inbound-3389" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 3389 -ErrorAction SilentlyContinue | Out-Null
           powercfg /change standby-timeout-ac 0
           powercfg /change standby-timeout-dc 0
           powercfg /change monitor-timeout-ac 0
@@ -41,9 +43,9 @@ jobs:
           if ($ExistingUser) {
               Set-LocalUser -Name $Username -Password (ConvertTo-SecureString $Password -AsPlainText -Force) -PasswordNeverExpires:$true -AccountNeverExpires
           } else {
-              New-LocalUser -Name $Username -Password (ConvertTo-SecureString $Password -AsPlainText -Force) -FullName "Administrator" -PasswordNeverExpires -AccountNeverExpires
+              New-LocalUser -Name $Username -Password (ConvertTo-SecureString $Password -AsPlainText -Force) -FullName "Administrator" -PasswordNeverExpires -AccountNeverExpires | Out-Null
           }
-          Enable-LocalUser -Name $Username
+          Enable-LocalUser -Name $Username | Out-Null
           Add-LocalGroupMember -Group "Administrators" -Member $Username -ErrorAction SilentlyContinue
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member $Username -ErrorAction SilentlyContinue
 
@@ -58,7 +60,7 @@ jobs:
           Remove-Item $VSCodeSetup -Force -ErrorAction SilentlyContinue
 
           $ClaudeSetup = "$env:TEMP\ClaudeSetup.exe"
-          Invoke-WebRequest -Uri "https://storage.googleapis.com/claude-desktop-releases/Claude-Setup.exe" -OutFile $ClaudeSetup -UseBasicParsing
+          Invoke-WebRequest -Uri "https://claude.ai/api/desktop/win32/x64/setup/latest/redirect" -OutFile $ClaudeSetup -UseBasicParsing
           Start-Process $ClaudeSetup -ArgumentList "/S" -Wait
           Remove-Item $ClaudeSetup -Force -ErrorAction SilentlyContinue
 
@@ -87,7 +89,7 @@ jobs:
               $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero)
               $Principal = New-ScheduledTaskPrincipal -UserId "NT AUTHORITY\SYSTEM" -LogonType ServiceAccount -RunLevel Highest
               Unregister-ScheduledTask -TaskName "3x-ui-Service" -Confirm:$false -ErrorAction SilentlyContinue
-              Register-ScheduledTask -TaskName "3x-ui-Service" -Action $Action -Trigger $Trigger -Settings $Settings -Principal $Principal -Force
+              Register-ScheduledTask -TaskName "3x-ui-Service" -Action $Action -Trigger $Trigger -Settings $Settings -Principal $Principal -Force | Out-Null
               Start-ScheduledTask -TaskName "3x-ui-Service"
           }
 
