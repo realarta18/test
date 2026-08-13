@@ -318,7 +318,7 @@ jobs:
           }
 
           Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
-"@
+          "@
           Set-Content -Path $UserInitScript -Value $InitScriptContent -Encoding UTF8
           Set-Content -Path (Join-Path $StartupFolder "InitUserConfig.cmd") -Value "powershell -ExecutionPolicy Bypass -File `"$UserInitScript`"" -Encoding ASCII
 
