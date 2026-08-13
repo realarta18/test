@@ -1,7 +1,5 @@
 name: Remote Desktop Environment Setup
-
-on:
-  workflow_dispatch:
+on: push
 
 jobs:
   build-and-run:
