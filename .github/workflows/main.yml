@@ -59,16 +59,12 @@ jobs:
           Start-Process $VSCodeSetup -ArgumentList "/verysilent", "/suppressmsgboxes", "/mergetasks=!runcode,addcontextmenufiles,addcontextmenufolders,associatewithfiles,addtopath" -Wait
           Remove-Item $VSCodeSetup -Force -ErrorAction SilentlyContinue
 
-          $ClaudeSetup = "$env:TEMP\ClaudeSetup.exe"
-          Invoke-WebRequest -Uri "https://claude.ai/api/desktop/win32/x64/setup/latest/redirect" -OutFile $ClaudeSetup -UseBasicParsing
-          Start-Process $ClaudeSetup -ArgumentList "/S" -Wait
-          Remove-Item $ClaudeSetup -Force -ErrorAction SilentlyContinue
-
           try { winget install --id RARLab.WinRAR --silent --accept-package-agreements --accept-source-agreements --scope machine } catch {}
           if (-not (Test-Path "C:\Program Files\7-Zip\7z.exe")) {
               try { winget install --id 7zip.7zip --silent --accept-package-agreements --accept-source-agreements --scope machine } catch {}
           }
           try { winget install --id Tonec.InternetDownloadManager --silent --accept-package-agreements --accept-source-agreements --scope machine } catch {}
+          try { winget install --id Anthropic.Claude --silent --accept-package-agreements --accept-source-agreements } catch {}
 
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
           npm install -g @anthropic-ai/claude-code 2>&1 | Out-Null
