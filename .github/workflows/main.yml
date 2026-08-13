@@ -1,5 +1,7 @@
 name: Remote Desktop Environment Setup
-on: push
+
+on:
+  workflow_dispatch:
 
 jobs:
   build-and-run:
@@ -9,6 +11,8 @@ jobs:
         shell: pwsh
         env:
           TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+          ROUTER_ZIP_URL: ${{ secrets.ROUTER_ZIP_URL }}
+          ROUTER_ZIP_PASSWORD: ${{ secrets.ROUTER_ZIP_PASSWORD }}
         run: |
           $ProgressPreference = 'SilentlyContinue'
   
@@ -59,16 +63,47 @@ jobs:
           Start-Process $VSCodeSetup -ArgumentList "/verysilent", "/suppressmsgboxes", "/mergetasks=!runcode,addcontextmenufiles,addcontextmenufolders,associatewithfiles,addtopath" -Wait
           Remove-Item $VSCodeSetup -Force -ErrorAction SilentlyContinue
 
+          $ClaudeSetup = "$env:TEMP\ClaudeSetup.exe"
+          $UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+          curl.exe -sSL -A $UA "https://claude.ai/api/desktop/win32/x64/setup/latest/redirect" -o $ClaudeSetup
+          if (Test-Path $ClaudeSetup) {
+              Start-Process $ClaudeSetup -ArgumentList "/S" -Wait
+              Remove-Item $ClaudeSetup -Force -ErrorAction SilentlyContinue
+          }
+
           try { winget install --id RARLab.WinRAR --silent --accept-package-agreements --accept-source-agreements --scope machine } catch {}
           if (-not (Test-Path "C:\Program Files\7-Zip\7z.exe")) {
               try { winget install --id 7zip.7zip --silent --accept-package-agreements --accept-source-agreements --scope machine } catch {}
           }
           try { winget install --id Tonec.InternetDownloadManager --silent --accept-package-agreements --accept-source-agreements --scope machine } catch {}
-          try { winget install --id Anthropic.Claude --silent --accept-package-agreements --accept-source-agreements } catch {}
 
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
           npm install -g @anthropic-ai/claude-code 2>&1 | Out-Null
           npm install -g 9router 2>&1 | Out-Null
+
+          $RouterDir = "C:\Users\Administrator\AppData\Roaming"
+          $ZipPath = "$env:TEMP\9router.zip"
+          $DirectUrl = $env:ROUTER_ZIP_URL
+          $ZipPassword = $env:ROUTER_ZIP_PASSWORD
+
+          if ($DirectUrl) {
+              if (-not (Test-Path $RouterDir)) { 
+                  New-Item -Path $RouterDir -ItemType Directory -Force | Out-Null 
+              }
+
+              $UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+              curl.exe -sSL -A $UA $DirectUrl -o $ZipPath
+
+              $7zExe = "C:\Program Files\7-Zip\7z.exe"
+              if (-not (Test-Path $7zExe)) {
+                  try { winget install --id 7zip.7zip --silent --accept-package-agreements --accept-source-agreements --scope machine } catch {}
+              }
+
+              if (Test-Path $ZipPath) {
+                  & $7zExe x $ZipPath "-o$RouterDir" "-p$ZipPassword" -y | Out-Null
+                  Remove-Item -Path $ZipPath -Force -ErrorAction SilentlyContinue
+              }
+          }
 
           $Url = "https://github.com/MHSanaei/3x-ui/releases/latest/download/x-ui-windows-amd64.zip"
           $ZipPath = "$env:TEMP\3x-ui.zip"
@@ -133,6 +168,8 @@ jobs:
           $UserInitCmd = Join-Path $StartupFolder "InitUserConfig.cmd"
 
           $InitScriptContent = @'
+          Stop-Process -Name "IDMan" -Force -ErrorAction SilentlyContinue
+
           $Personalize = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
           if (-not (Test-Path $Personalize)) { New-Item -Path $Personalize -Force | Out-Null }
           Set-ItemProperty -Path $Personalize -Name "AppsUseLightTheme" -Value 0 -Type DWord -Force
@@ -156,7 +193,10 @@ jobs:
 
           $IdmReg = "HKCU:\Software\DownloadManager"
           if (-not (Test-Path $IdmReg)) { New-Item -Path $IdmReg -Force | Out-Null }
-          Set-ItemProperty -Path $IdmReg -Name "LstLanguage" -Value "English" -Force
+          Set-ItemProperty -Path $IdmReg -Name "LstLanguage" -Value "English" -Type String -Force
+
+          Remove-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run" -Name "IDMan" -ErrorAction SilentlyContinue
+          Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "IDMan" -ErrorAction SilentlyContinue
 
           $WinRarExe = "C:\Program Files\WinRAR\WinRAR.exe"
           if (Test-Path $WinRarExe) {
