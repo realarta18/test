@@ -63,7 +63,6 @@ jobs:
           (New-Object System.Security.Cryptography.RNGCryptoServiceProvider).GetBytes($Bytes)
           $RandomPart = -join ($Bytes | ForEach-Object { $Chars[$_ % $Chars.Length] })
           $Password = "Rx7#" + $RandomPart + "!9"
-          Write-Host "::add-mask::$Password"
           $SecurePassword = ConvertTo-SecureString $Password -AsPlainText -Force
           $ExistingUser = Get-LocalUser -Name $Username -ErrorAction SilentlyContinue
           if ($ExistingUser) {
