@@ -6,7 +6,7 @@ jobs:
     runs-on: windows-2025
     steps:
       - name: Complete System & Application Deployment
-        shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+        shell: pwsh
         env:
           TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
         run: |
@@ -139,6 +139,10 @@ jobs:
           Set-ItemProperty -Path $ExplorerAdv -Name "HideFileExt" -Value 0 -Type DWord -Force
           Set-ItemProperty -Path $ExplorerAdv -Name "Hidden" -Value 1 -Type DWord -Force
 
+          $WinRarReg = "HKCU:\Software\WinRAR\Setup"
+          if (-not (Test-Path $WinRarReg)) { New-Item -Path $WinRarReg -Force | Out-Null }
+          Set-ItemProperty -Path $WinRarReg -Name "Cascaded" -Value 1 -Type DWord -Force
+
           $LangList = Get-WinUserLanguageList
           if (-not ($LangList | Where-Object { $_.LanguageTag -eq "fa-IR" })) {
               $LangList.Add("fa-IR")
@@ -192,7 +196,7 @@ jobs:
           $UrlShortcut.Save()
 
       - name: Display Connection Details
-        shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+        shell: pwsh
         run: |
           Write-Host "=================================================="
           Write-Host "         SECURE RDP SESSION ESTABLISHED          "
