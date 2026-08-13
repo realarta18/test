@@ -8,7 +8,7 @@ jobs:
       - name: Complete System & Application Deployment
         shell: pwsh
         env:
-          TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+          TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
         run: |
           Set-Service -Name seclogon -StartupType Automatic -ErrorAction SilentlyContinue
           Start-Service -Name seclogon -ErrorAction SilentlyContinue
@@ -93,8 +93,8 @@ jobs:
           Start-Process msiexec.exe -ArgumentList "/i",$Installer,"/quiet","/norestart" -Wait
           Remove-Item -Path $Installer -Force -ErrorAction SilentlyContinue
           
-          if ($env:TAILSCALE_AUTHKEY) {
-              & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=$env:TAILSCALE_AUTHKEY --hostname=win-server-$env:GITHUB_RUN_ID
+          if ($env:TAILSCALE_AUTH_KEY) {
+              & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=$env:TAILSCALE_AUTH_KEY --hostname=win-server-$env:GITHUB_RUN_ID
           }
           
           $TsIP = $null
