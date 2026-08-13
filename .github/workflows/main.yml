@@ -1,5 +1,7 @@
 name: Remote Desktop Environment Setup
-on: push
+
+on:
+  workflow_dispatch:
 
 jobs:
   build-and-run:
@@ -207,7 +209,7 @@ jobs:
           }
 
           Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
-"@
+          "@
           Set-Content -Path $UserInitScript -Value $InitScriptContent -Encoding UTF8
           Set-Content -Path $UserInitCmd -Value "powershell -ExecutionPolicy Bypass -File `"$UserInitScript`"" -Encoding ASCII
 
