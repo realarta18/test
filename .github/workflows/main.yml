@@ -6,28 +6,61 @@ on:
 jobs:
   build-and-run:
     runs-on: windows-latest
+    timeout-minutes: 360
 
     steps:
-      - name: Harden System and Enable RDP Access
+      - name: Configure System and Enable RDP
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 1 -Force
           Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name "LocalAccountTokenFilterPolicy" -Value 1 -Force
+          Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name "ConsentPromptBehaviorAdmin" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name "ConsentPromptBehaviorUser" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name "EnableInstallerDetection" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name "EnableLUA" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name "PromptOnSecureDesktop" -Value 0 -Force
           Set-Service -Name TermService -StartupType Automatic
           net accounts /lockoutthreshold:0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction SilentlyContinue
           netsh advfirewall firewall delete rule name="RDP-Inbound-3389" >$null 2>&1
           netsh advfirewall firewall add rule name="RDP-Inbound-3389" dir=in action=allow protocol=TCP localport=3389
+          powercfg /change standby-timeout-ac 0
+          powercfg /change standby-timeout-dc 0
+          powercfg /change monitor-timeout-ac 0
+          powercfg /change monitor-timeout-dc 0
+          powercfg /change hibernate-timeout-ac 0
+          powercfg /change hibernate-timeout-dc 0
+          powercfg /change disk-timeout-ac 0
+          powercfg /change disk-timeout-dc 0
+          powercfg /hibernate off
+          powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
+          Set-TimeZone -Id "Iran Standard Time"
+          New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" -Force -ErrorAction SilentlyContinue | Out-Null
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" -Name "NoAutoUpdate" -Value 1 -Type DWord -Force
+          New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent" -Force -ErrorAction SilentlyContinue | Out-Null
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent" -Name "DisableSoftLanding" -Value 1 -Type DWord -Force
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent" -Name "DisableWindowsConsumerFeatures" -Value 1 -Type DWord -Force
+          New-Item -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock" -Force -ErrorAction SilentlyContinue | Out-Null
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock" -Name "AllowDevelopmentWithoutDevLicense" -Value 1 -Type DWord -Force
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1 -Type DWord -Force
+          New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Force -ErrorAction SilentlyContinue | Out-Null
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Name "AllowTelemetry" -Value 0 -Type DWord -Force
+          New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender" -Force -ErrorAction SilentlyContinue | Out-Null
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender" -Name "DisableAntiSpyware" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+          New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection" -Force -ErrorAction SilentlyContinue | Out-Null
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection" -Name "DisableRealtimeMonitoring" -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
+          try { Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue } catch {}
           Restart-Service -Name TermService -Force
 
       - name: Provision Administrator Account
         run: |
           $Username = "Administrator"
           $Chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
-          $Bytes = New-Object byte[] 14
+          $Bytes = New-Object byte[] 16
           (New-Object System.Security.Cryptography.RNGCryptoServiceProvider).GetBytes($Bytes)
-          $Password = "Rx7#" + (-join ($Bytes | ForEach-Object { $Chars[$_ % $Chars.Length] })) + "!9"
+          $RandomPart = -join ($Bytes | ForEach-Object { $Chars[$_ % $Chars.Length] })
+          $Password = "Rx7#" + $RandomPart + "!9"
           $SecurePassword = ConvertTo-SecureString $Password -AsPlainText -Force
           $ExistingUser = Get-LocalUser -Name $Username -ErrorAction SilentlyContinue
           if ($ExistingUser) {
@@ -41,95 +74,240 @@ jobs:
           "RDP_USER=$Username" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "RDP_PASS=$Password" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Apply Desktop Theme and Keyboard Configuration
+      - name: Apply Desktop Theme and Configuration
+        continue-on-error: true
         run: |
-          $ThemePaths = @(
-              "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
-              "Registry::HKEY_USERS\.DEFAULT\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
-          )
-          foreach ($Path in $ThemePaths) {
-              if (-not (Test-Path $Path)) { New-Item -Path $Path -Force | Out-Null }
-              Set-ItemProperty -Path $Path -Name "AppsUseLightTheme" -Value 0 -Force
-              Set-ItemProperty -Path $Path -Name "SystemUsesLightTheme" -Value 0 -Force
-              Set-ItemProperty -Path $Path -Name "EnableTransparency" -Value 1 -Force
-          }
-          $IconPaths = @(
-              "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel",
-              "Registry::HKEY_USERS\.DEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel"
-          )
-          foreach ($Path in $IconPaths) {
-              if (-not (Test-Path $Path)) { New-Item -Path $Path -Force | Out-Null }
-              Set-ItemProperty -Path $Path -Name "{20D04FE0-3AEA-1069-A2D8-08002B30309D}" -Value 0 -Force
-              Set-ItemProperty -Path $Path -Name "{59031a47-3f72-44a7-89c5-5595fe6b30ee}" -Value 0 -Force
-          }
+          $DefaultTheme = "Registry::HKEY_USERS\.DEFAULT\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
+          if (-not (Test-Path $DefaultTheme)) { New-Item -Path $DefaultTheme -Force | Out-Null }
+          Set-ItemProperty -Path $DefaultTheme -Name "AppsUseLightTheme" -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $DefaultTheme -Name "SystemUsesLightTheme" -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $DefaultTheme -Name "EnableTransparency" -Value 1 -Type DWord -Force
+          $DefaultIcons = "Registry::HKEY_USERS\.DEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel"
+          if (-not (Test-Path $DefaultIcons)) { New-Item -Path $DefaultIcons -Force | Out-Null }
+          Set-ItemProperty -Path $DefaultIcons -Name "{20D04FE0-3AEA-1069-A2D8-08002B30309D}" -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $DefaultIcons -Name "{59031a47-3f72-44a7-89c5-5595fe6b30ee}" -Value 0 -Type DWord -Force
+          $DefaultIconsClassic = "Registry::HKEY_USERS\.DEFAULT\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\ClassicStartMenu"
+          if (-not (Test-Path $DefaultIconsClassic)) { New-Item -Path $DefaultIconsClassic -Force | Out-Null }
+          Set-ItemProperty -Path $DefaultIconsClassic -Name "{20D04FE0-3AEA-1069-A2D8-08002B30309D}" -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path $DefaultIconsClassic -Name "{59031a47-3f72-44a7-89c5-5595fe6b30ee}" -Value 0 -Type DWord -Force
           $LanguageList = Get-WinUserLanguageList
           if (-not ($LanguageList | Where-Object { $_.LanguageTag -eq "fa-IR" })) {
               $LanguageList.Add("fa-IR")
               Set-WinUserLanguageList -LanguageList $LanguageList -Force
           }
-          $KeyboardPaths = @(
-              "HKCU:\Keyboard Layout\Preload",
-              "Registry::HKEY_USERS\.DEFAULT\Keyboard Layout\Preload"
-          )
-          foreach ($Path in $KeyboardPaths) {
-              if (-not (Test-Path $Path)) { New-Item -Path $Path -Force | Out-Null }
-              Set-ItemProperty -Path $Path -Name "1" -Value "00000409" -Force
-              Set-ItemProperty -Path $Path -Name "2" -Value "00000429" -Force
-          }
-          Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
+          $DefaultKbd = "Registry::HKEY_USERS\.DEFAULT\Keyboard Layout\Preload"
+          if (-not (Test-Path $DefaultKbd)) { New-Item -Path $DefaultKbd -Force | Out-Null }
+          Set-ItemProperty -Path $DefaultKbd -Name "1" -Value "00000409" -Force
+          Set-ItemProperty -Path $DefaultKbd -Name "2" -Value "00000429" -Force
+          $Username = $env:RDP_USER
+          $Password = $env:RDP_PASS
+          $SecurePassword = ConvertTo-SecureString $Password -AsPlainText -Force
+          $Cred = New-Object System.Management.Automation.PSCredential($Username, $SecurePassword)
+          $UserScript = @'
+$ThemePath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
+if (-not (Test-Path $ThemePath)) { New-Item -Path $ThemePath -Force | Out-Null }
+Set-ItemProperty -Path $ThemePath -Name "AppsUseLightTheme" -Value 0 -Type DWord -Force
+Set-ItemProperty -Path $ThemePath -Name "SystemUsesLightTheme" -Value 0 -Type DWord -Force
+Set-ItemProperty -Path $ThemePath -Name "EnableTransparency" -Value 1 -Type DWord -Force
+Set-ItemProperty -Path $ThemePath -Name "ColorPrevalence" -Value 0 -Type DWord -Force
+$IconsNSP = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel"
+if (-not (Test-Path $IconsNSP)) { New-Item -Path $IconsNSP -Force | Out-Null }
+Set-ItemProperty -Path $IconsNSP -Name "{20D04FE0-3AEA-1069-A2D8-08002B30309D}" -Value 0 -Type DWord -Force
+Set-ItemProperty -Path $IconsNSP -Name "{59031a47-3f72-44a7-89c5-5595fe6b30ee}" -Value 0 -Type DWord -Force
+$IconsCSM = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\ClassicStartMenu"
+if (-not (Test-Path $IconsCSM)) { New-Item -Path $IconsCSM -Force | Out-Null }
+Set-ItemProperty -Path $IconsCSM -Name "{20D04FE0-3AEA-1069-A2D8-08002B30309D}" -Value 0 -Type DWord -Force
+Set-ItemProperty -Path $IconsCSM -Name "{59031a47-3f72-44a7-89c5-5595fe6b30ee}" -Value 0 -Type DWord -Force
+$AdvPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
+if (-not (Test-Path $AdvPath)) { New-Item -Path $AdvPath -Force | Out-Null }
+Set-ItemProperty -Path $AdvPath -Name "HideFileExt" -Value 0 -Type DWord -Force
+Set-ItemProperty -Path $AdvPath -Name "Hidden" -Value 1 -Type DWord -Force
+Set-ItemProperty -Path $AdvPath -Name "LaunchTo" -Value 1 -Type DWord -Force
+Set-ItemProperty -Path $AdvPath -Name "TaskbarSmallIcons" -Value 1 -Type DWord -Force
+Set-ItemProperty -Path $AdvPath -Name "ShowTaskViewButton" -Value 0 -Type DWord -Force
+Set-ItemProperty -Path $AdvPath -Name "TaskbarDa" -Value 0 -Type DWord -Force
+Set-ItemProperty -Path $AdvPath -Name "TaskbarMn" -Value 0 -Type DWord -Force
+Set-ItemProperty -Path $AdvPath -Name "Start_TrackProgs" -Value 0 -Type DWord -Force
+$CdmPath = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"
+if (-not (Test-Path $CdmPath)) { New-Item -Path $CdmPath -Force | Out-Null }
+Set-ItemProperty -Path $CdmPath -Name "SubscribedContent-338388Enabled" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+Set-ItemProperty -Path $CdmPath -Name "SubscribedContent-338389Enabled" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+Set-ItemProperty -Path $CdmPath -Name "SubscribedContent-310093Enabled" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+Set-ItemProperty -Path $CdmPath -Name "SubscribedContent-353694Enabled" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+Set-ItemProperty -Path $CdmPath -Name "SubscribedContent-353696Enabled" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+Set-ItemProperty -Path $CdmPath -Name "SilentInstalledAppsEnabled" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+Set-ItemProperty -Path $CdmPath -Name "SystemPaneSuggestionsEnabled" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+$KbdPath = "HKCU:\Keyboard Layout\Preload"
+if (-not (Test-Path $KbdPath)) { New-Item -Path $KbdPath -Force | Out-Null }
+Set-ItemProperty -Path $KbdPath -Name "1" -Value "00000409" -Force
+Set-ItemProperty -Path $KbdPath -Name "2" -Value "00000429" -Force
+Set-ItemProperty -Path "HKCU:\Control Panel\Desktop" -Name "WallPaper" -Value "" -Force
+Set-ItemProperty -Path "HKCU:\Control Panel\Desktop" -Name "WallpaperStyle" -Value "10" -Force
+Set-ItemProperty -Path "HKCU:\Control Panel\Desktop" -Name "TileWallpaper" -Value "0" -Force
+Set-ItemProperty -Path "HKCU:\Control Panel\Colors" -Name "Background" -Value "32 32 32" -Force
+Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\DWM" -Name "ColorPrevalence" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+$GameBarPath = "HKCU:\Software\Microsoft\GameBar"
+if (-not (Test-Path $GameBarPath)) { New-Item -Path $GameBarPath -Force | Out-Null }
+Set-ItemProperty -Path $GameBarPath -Name "AllowAutoGameMode" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+Set-ItemProperty -Path $GameBarPath -Name "AutoGameModeEnabled" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+Rundll32.exe user32.dll,UpdatePerUserSystemParameters 2,0
+Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 3
+'@
+          $ScriptPath = "$env:TEMP\UserThemeConfig.ps1"
+          $UserScript | Out-File -FilePath $ScriptPath -Encoding utf8
+          Start-Process powershell.exe -ArgumentList "-ExecutionPolicy","Bypass","-NoProfile","-File",$ScriptPath -Credential $Cred -Wait
+          Remove-Item -Path $ScriptPath -Force -ErrorAction SilentlyContinue
 
       - name: Install Brave Browser
+        continue-on-error: true
         run: |
           $Url = "https://laptop-updates.brave.com/latest/winx64"
           $Installer = "$env:TEMP\BraveSetup.exe"
-          for ($i = 1; $i -le 3; $i++) {
+          for ($i = 1; $i -le 5; $i++) {
               try {
-                  Invoke-WebRequest -Uri $Url -OutFile $Installer -UseBasicParsing
+                  Invoke-WebRequest -Uri $Url -OutFile $Installer -UseBasicParsing -TimeoutSec 60
                   break
               } catch { Start-Sleep -Seconds 5 }
           }
-          Start-Process -FilePath $Installer -ArgumentList "/silent", "/install" -Wait
+          Start-Process -FilePath $Installer -ArgumentList "/silent","/install" -Wait
           Remove-Item -Path $Installer -Force -ErrorAction SilentlyContinue
 
       - name: Install Visual Studio Code
+        continue-on-error: true
         run: |
           $Url = "https://update.code.visualstudio.com/latest/win32-x64/stable"
           $Installer = "$env:TEMP\VSCodeSetup.exe"
-          for ($i = 1; $i -le 3; $i++) {
+          for ($i = 1; $i -le 5; $i++) {
               try {
-                  Invoke-WebRequest -Uri $Url -OutFile $Installer -UseBasicParsing
+                  Invoke-WebRequest -Uri $Url -OutFile $Installer -UseBasicParsing -TimeoutSec 60
                   break
               } catch { Start-Sleep -Seconds 5 }
           }
-          Start-Process -FilePath $Installer -ArgumentList "/verysilent", "/norestart", "/mergetasks=!runcode,addcontextmenufiles,addcontextmenufolders,associatewithfiles,addtopath" -Wait
+          Start-Process -FilePath $Installer -ArgumentList "/verysilent","/norestart","/mergetasks=!runcode,addcontextmenufiles,addcontextmenufolders,associatewithfiles,addtopath" -Wait
+          Remove-Item -Path $Installer -Force -ErrorAction SilentlyContinue
+
+      - name: Install WinRAR
+        continue-on-error: true
+        run: |
+          $Url = "https://www.rarlab.com/rar/winrar-x64-710.exe"
+          $Installer = "$env:TEMP\WinRARSetup.exe"
+          for ($i = 1; $i -le 5; $i++) {
+              try {
+                  Invoke-WebRequest -Uri $Url -OutFile $Installer -UseBasicParsing -TimeoutSec 60
+                  if ((Get-Item $Installer).Length -gt 1MB) { break }
+              } catch { Start-Sleep -Seconds 5 }
+          }
+          if (Test-Path $Installer) {
+              Start-Process -FilePath $Installer -ArgumentList "/s" -Wait
+          }
+          Remove-Item -Path $Installer -Force -ErrorAction SilentlyContinue
+
+      - name: Install 7-Zip
+        continue-on-error: true
+        run: |
+          $Url = "https://www.7-zip.org/a/7z2408-x64.exe"
+          $Installer = "$env:TEMP\7zSetup.exe"
+          for ($i = 1; $i -le 5; $i++) {
+              try {
+                  Invoke-WebRequest -Uri $Url -OutFile $Installer -UseBasicParsing -TimeoutSec 60
+                  if ((Get-Item $Installer).Length -gt 1MB) { break }
+              } catch { Start-Sleep -Seconds 5 }
+          }
+          if (Test-Path $Installer) {
+              Start-Process -FilePath $Installer -ArgumentList "/S" -Wait
+          }
           Remove-Item -Path $Installer -Force -ErrorAction SilentlyContinue
 
       - name: Install Internet Download Manager
+        continue-on-error: true
         run: |
           $Url = "https://mirror2.internetdownloadmanager.com/idman642build25.exe"
           $Installer = "$env:TEMP\idman_setup.exe"
-          for ($i = 1; $i -le 3; $i++) {
+          $Downloaded = $false
+          for ($i = 1; $i -le 5; $i++) {
               try {
-                  Invoke-WebRequest -Uri $Url -OutFile $Installer -UseBasicParsing -UserAgent "Mozilla/5.0"
-                  break
+                  Invoke-WebRequest -Uri $Url -OutFile $Installer -UseBasicParsing -UserAgent "Mozilla/5.0" -TimeoutSec 120
+                  if ((Get-Item $Installer).Length -gt 1MB) { $Downloaded = $true; break }
               } catch { Start-Sleep -Seconds 5 }
           }
-          $Process = Start-Process -FilePath $Installer -ArgumentList "/s" -PassThru
-          Start-Sleep -Seconds 20
-          if (-not $Process.HasExited) {
-              Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+          if ($Downloaded) {
+              $Process = Start-Process -FilePath $Installer -ArgumentList "/s" -PassThru
+              $Exited = $Process.WaitForExit(180000)
+              if (-not $Exited) {
+                  taskkill /F /IM idman* /T 2>$null
+                  taskkill /F /IM IEMonitor* /T 2>$null
+                  if (-not $Process.HasExited) { Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue }
+              }
+              Start-Sleep -Seconds 5
+              $IdmPath = "${env:ProgramFiles(x86)}\Internet Download Manager\IDMan.exe"
+              if (-not (Test-Path $IdmPath)) {
+                  $IdmPath = "$env:ProgramFiles\Internet Download Manager\IDMan.exe"
+              }
+              if (Test-Path $IdmPath) {
+                  Write-Host "IDM installed successfully at: $IdmPath"
+              } else {
+                  Write-Host "IDM installation verification failed"
+              }
+              Get-Process -Name "idman*","IEMonitor*" -ErrorAction SilentlyContinue | Stop-Process -Force
+          } else {
+              Write-Host "IDM download failed after retries"
           }
-          Get-Process -Name "idman*", "IEMonitor*" -ErrorAction SilentlyContinue | Stop-Process -Force
           Remove-Item -Path $Installer -Force -ErrorAction SilentlyContinue
 
+      - name: Install Claude Desktop
+        continue-on-error: true
+        run: |
+          $Url = "https://claude.ai/api/desktop/win32/x64/setup/latest/redirect"
+          $Installer = "$env:TEMP\ClaudeSetup.exe"
+          $Downloaded = $false
+          for ($i = 1; $i -le 5; $i++) {
+              try {
+                  Invoke-WebRequest -Uri $Url -OutFile $Installer -UseBasicParsing -TimeoutSec 120 -MaximumRedirection 10
+                  if ((Get-Item $Installer).Length -gt 1MB) { $Downloaded = $true; break }
+              } catch { Start-Sleep -Seconds 5 }
+          }
+          if ($Downloaded) {
+              $Username = $env:RDP_USER
+              $Password = $env:RDP_PASS
+              $SecurePassword = ConvertTo-SecureString $Password -AsPlainText -Force
+              $Cred = New-Object System.Management.Automation.PSCredential($Username, $SecurePassword)
+              $Process = Start-Process -FilePath $Installer -ArgumentList "--silent" -Credential $Cred -PassThru
+              $Process.WaitForExit(180000) | Out-Null
+              Start-Sleep -Seconds 5
+          }
+          Remove-Item -Path $Installer -Force -ErrorAction SilentlyContinue
+
+      - name: Install CLI Tools
+        continue-on-error: true
+        run: |
+          $Username = $env:RDP_USER
+          $Password = $env:RDP_PASS
+          $SecurePassword = ConvertTo-SecureString $Password -AsPlainText -Force
+          $Cred = New-Object System.Management.Automation.PSCredential($Username, $SecurePassword)
+          $NodePath = (Get-Command node -ErrorAction SilentlyContinue).Source
+          $NodeDir = if ($NodePath) { Split-Path $NodePath -Parent } else { "C:\Program Files\nodejs" }
+          $CliScript = @'
+$env:PATH += ";NODE_DIR"
+$env:PATH += ";$env:APPDATA\npm"
+npm install -g @anthropic-ai/claude-code 2>&1
+npm install -g 9router 2>&1
+'@
+          $CliScript = $CliScript.Replace('NODE_DIR', $NodeDir)
+          $ScriptPath = "$env:TEMP\InstallCliTools.ps1"
+          $CliScript | Out-File -FilePath $ScriptPath -Encoding utf8
+          Start-Process powershell.exe -ArgumentList "-ExecutionPolicy","Bypass","-NoProfile","-File",$ScriptPath -Credential $Cred -Wait
+          Remove-Item -Path $ScriptPath -Force -ErrorAction SilentlyContinue
+
       - name: Deploy 3x-ui Panel as Persistent Service
+        continue-on-error: true
         run: |
           $Url = "https://github.com/MHSanaei/3x-ui/releases/download/v3.6.0/x-ui-windows-amd64.zip"
           $ZipPath = "$env:TEMP\3x-ui.zip"
           $InstallPath = "C:\3x-ui"
-          for ($i = 1; $i -le 3; $i++) {
+          for ($i = 1; $i -le 5; $i++) {
               try {
-                  Invoke-WebRequest -Uri $Url -OutFile $ZipPath -UseBasicParsing
+                  Invoke-WebRequest -Uri $Url -OutFile $ZipPath -UseBasicParsing -TimeoutSec 120
                   break
               } catch { Start-Sleep -Seconds 5 }
           }
@@ -148,95 +326,21 @@ jobs:
               Start-ScheduledTask -TaskName "3x-ui-Service"
           }
 
-      - name: Establish High-Speed TCP Tunnel
+      - name: Establish Tailscale Secure Tunnel
         run: |
-          $Address = $null
-
-          $BoreDir = "C:\bore"
-          New-Item -Path $BoreDir -ItemType Directory -Force | Out-Null
-          $ZipPath = "$env:TEMP\bore.zip"
-
-          try {
-              $Headers = @{ "User-Agent" = "GitHubActions-Workflow" }
-              $Release = Invoke-RestMethod -Uri "https://api.github.com/repos/ekzhang/bore/releases/latest" -Headers $Headers -ErrorAction Stop
-              $Asset = $Release.assets | Where-Object { $_.name -match "windows" -and $_.name -match "\.zip$" } | Select-Object -First 1
-
-              if (-not $Asset) {
-                  throw "No matching Windows asset found in bore latest release."
-              }
-
-              Invoke-WebRequest -Uri $Asset.browser_download_url -OutFile $ZipPath -UseBasicParsing -ErrorAction Stop
-              Expand-Archive -Path $ZipPath -DestinationPath $BoreDir -Force
-              Remove-Item -Path $ZipPath -Force -ErrorAction SilentlyContinue
-
-              $BoreExe = Get-ChildItem -Path $BoreDir -Filter "bore.exe" -Recurse | Select-Object -First 1 -ExpandProperty FullName
-
-              if (-not $BoreExe) {
-                  throw "bore.exe not found after extraction."
-              }
-
-              $BoreOut = "$env:TEMP\bore_out.txt"
-              $BoreErr = "$env:TEMP\bore_err.txt"
-              Start-Process -FilePath $BoreExe -ArgumentList "local 3389 --to bore.pub" -RedirectStandardOutput $BoreOut -RedirectStandardError $BoreErr -WindowStyle Hidden
-
-              for ($i = 1; $i -le 15; $i++) {
-                  Start-Sleep -Seconds 2
-                  $Combined = ""
-                  if (Test-Path $BoreOut) { $Combined += Get-Content $BoreOut -Raw }
-                  if (Test-Path $BoreErr) { $Combined += Get-Content $BoreErr -Raw }
-                  if ($Combined -match "bore\.pub:\d+") {
-                      $Address = $Matches[0]
-                      break
-                  }
-              }
-
-              if (-not $Address) {
-                  Write-Host "Bore did not produce an address within timeout."
-                  if (Test-Path $BoreOut) { Write-Host "--- bore stdout ---"; Get-Content $BoreOut | Write-Host }
-                  if (Test-Path $BoreErr) { Write-Host "--- bore stderr ---"; Get-Content $BoreErr | Write-Host }
-              }
-          } catch {
-              Write-Host "Primary tunnel (bore) failed: $($_.Exception.Message)"
+          $TsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          $Installer = "$env:TEMP\tailscale.msi"
+          Invoke-WebRequest -Uri $TsUrl -OutFile $Installer
+          Start-Process msiexec.exe -ArgumentList "/i",$Installer,"/quiet","/norestart" -Wait
+          Remove-Item -Path $Installer -Force -ErrorAction SilentlyContinue
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=win-server-$env:GITHUB_RUN_ID
+          $TsIP = $null
+          for ($i = 0; $i -lt 12 -and -not $TsIP; $i++) {
+              Start-Sleep -Seconds 5
+              $TsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
           }
-
-          if (-not $Address) {
-              Write-Host "Attempting fallback tunnel via Pinggy..."
-
-              $SshPath = (Get-Command ssh -ErrorAction SilentlyContinue).Source
-
-              if (-not $SshPath) {
-                  Write-Host "##[error] OpenSSH client (ssh.exe) not found on this runner."
-              } else {
-                  $PinggyOut = "$env:TEMP\pinggy_out.txt"
-                  $PinggyErr = "$env:TEMP\pinggy_err.txt"
-
-                  Start-Process -FilePath $SshPath -ArgumentList "-o StrictHostKeyChecking=no -o ServerAliveInterval=30 -p 443 -R0:localhost:3389 free.pinggy.io" -RedirectStandardOutput $PinggyOut -RedirectStandardError $PinggyErr -WindowStyle Hidden
-
-                  for ($i = 1; $i -le 20; $i++) {
-                      Start-Sleep -Seconds 2
-                      $Combined = ""
-                      if (Test-Path $PinggyOut) { $Combined += Get-Content $PinggyOut -Raw }
-                      if (Test-Path $PinggyErr) { $Combined += Get-Content $PinggyErr -Raw }
-                      if ($Combined -match "[a-zA-Z0-9\.\-]+\.pinggy\.[a-z]+:\d+") {
-                          $Address = $Matches[0]
-                          break
-                      }
-                  }
-
-                  if (-not $Address) {
-                      Write-Host "Pinggy did not produce a recognizable address within timeout."
-                      if (Test-Path $PinggyOut) { Write-Host "--- pinggy stdout ---"; Get-Content $PinggyOut | Write-Host }
-                      if (Test-Path $PinggyErr) { Write-Host "--- pinggy stderr ---"; Get-Content $PinggyErr | Write-Host }
-                  }
-              }
-          }
-
-          if ($Address) {
-              "RDP_ADDRESS=$Address" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-              Write-Host "Tunnel successfully established at: $Address"
-          } else {
-              Write-Host "##[error] Failed to establish any tunnel connection."
-              exit 1
+          if ($TsIP) {
+              "TAILSCALE_IP=$TsIP" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           }
 
       - name: Display Access Credentials and Maintain Session
@@ -245,7 +349,8 @@ jobs:
           Write-Host "=================================================="
           Write-Host "         SECURE RDP SESSION ESTABLISHED          "
           Write-Host "=================================================="
-          Write-Host " RDP Address  : $env:RDP_ADDRESS"
+          Write-Host " Tailscale IP : $env:TAILSCALE_IP"
+          Write-Host " RDP Port     : 3389"
           Write-Host " Username     : $env:RDP_USER"
           Write-Host " Password     : $env:RDP_PASS"
           Write-Host "=================================================="
