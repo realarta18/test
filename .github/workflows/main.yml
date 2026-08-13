@@ -63,19 +63,12 @@ jobs:
           Start-Process $VSCodeSetup -ArgumentList "/verysilent", "/suppressmsgboxes", "/mergetasks=!runcode,addcontextmenufiles,addcontextmenufolders,associatewithfiles,addtopath" -Wait
           Remove-Item $VSCodeSetup -Force -ErrorAction SilentlyContinue
 
-          $ClaudeSetup = "$env:TEMP\ClaudeSetup.exe"
-          $UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
-          curl.exe -sSL -A $UA "https://claude.ai/api/desktop/win32/x64/setup/latest/redirect" -o $ClaudeSetup
-          if (Test-Path $ClaudeSetup) {
-              Start-Process $ClaudeSetup -ArgumentList "/S" -Wait
-              Remove-Item $ClaudeSetup -Force -ErrorAction SilentlyContinue
-          }
-
           try { winget install --id RARLab.WinRAR --silent --accept-package-agreements --accept-source-agreements --scope machine } catch {}
           if (-not (Test-Path "C:\Program Files\7-Zip\7z.exe")) {
               try { winget install --id 7zip.7zip --silent --accept-package-agreements --accept-source-agreements --scope machine } catch {}
           }
           try { winget install --id Tonec.InternetDownloadManager --silent --accept-package-agreements --accept-source-agreements --scope machine } catch {}
+          try { winget install --id Anthropic.Claude --silent --accept-package-agreements --accept-source-agreements } catch {}
 
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
           npm install -g @anthropic-ai/claude-code 2>&1 | Out-Null
@@ -240,7 +233,7 @@ jobs:
           $VSCodePaths = @("C:\Program Files\Microsoft VS Code\Code.exe", "$env:LocalAppData\Programs\Microsoft VS Code\Code.exe")
           foreach ($vsp in $VSCodePaths) { if (Test-Path $vsp) { Create-Shortcut -Name "Visual Studio Code" -TargetPath $vsp; break } }
 
-          $ClaudePaths = @("$env:LocalAppData\Programs\Claude\Claude.exe", "C:\Users\runneradmin\AppData\Local\Programs\Claude\Claude.exe", "C:\Program Files\Claude\Claude.exe")
+          $ClaudePaths = @("C:\Users\runneradmin\AppData\Local\Programs\Claude\Claude.exe", "C:\Users\runneradmin\AppData\Local\Claude\Claude.exe", "C:\Program Files\Claude\Claude.exe", "$env:LocalAppData\Programs\Claude\Claude.exe")
           foreach ($cp in $ClaudePaths) { if (Test-Path $cp) { Create-Shortcut -Name "Claude Desktop" -TargetPath $cp; break } }
 
           Create-Shortcut -Name "WinRAR" -TargetPath "C:\Program Files\WinRAR\WinRAR.exe"
