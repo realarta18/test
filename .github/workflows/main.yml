@@ -5,7 +5,7 @@ jobs:
   build-and-run:
     runs-on: windows-2025
     steps:
-      - name: Complete System & Application Deployment
+      - name: Deploy Environment
         shell: pwsh
         env:
           TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
@@ -63,6 +63,7 @@ jobs:
               try { winget install --id 7zip.7zip --silent --accept-package-agreements --accept-source-agreements --scope machine } catch {}
           }
           try { winget install --id Tonec.InternetDownloadManager --silent --accept-package-agreements --accept-source-agreements --scope machine } catch {}
+          try { winget install --id Anthropic.Claude --silent --accept-package-agreements --accept-source-agreements --scope machine } catch {}
 
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
           npm install -g @anthropic-ai/claude-code 2>&1 | Out-Null
@@ -92,21 +93,33 @@ jobs:
           Invoke-WebRequest -Uri $TsUrl -OutFile $Installer -UseBasicParsing
           Start-Process msiexec.exe -ArgumentList "/i",$Installer,"/quiet","/norestart" -Wait
           Remove-Item -Path $Installer -Force -ErrorAction SilentlyContinue
-          
+
           if ($env:TAILSCALE_AUTH_KEY) {
               & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=$env:TAILSCALE_AUTH_KEY --hostname=win-server-$env:GITHUB_RUN_ID
           }
-          
+
           $TsIP = $null
           for ($i = 0; $i -lt 12 -and -not $TsIP; $i++) {
               Start-Sleep -Seconds 5
               $TsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4 2>$null
           }
+          if (-not $TsIP) {
+              if (-not $env:TAILSCALE_AUTH_KEY) {
+                  $TsIP = "NOT_SET_IN_GITHUB_SECRETS"
+              } else {
+                  $TsIP = "CONNECTION_TIMEOUT"
+              }
+          }
 
-          New-Item -Path "HKLM:\SOFTWARE\WinRAR" -Force | Out-Null
-          Set-ItemProperty -Path "HKLM:\SOFTWARE\WinRAR" -Name "exe64" -Value "C:\Program Files\WinRAR\WinRAR.exe" -Force
           $WinRarExe = "C:\Program Files\WinRAR\WinRAR.exe"
           if (Test-Path $WinRarExe) {
+              regsvr32.exe /s "C:\Program Files\WinRAR\rarext.dll"
+              regsvr32.exe /s "C:\Program Files\WinRAR\rarext64.dll"
+              $WinRarHKLM = "HKLM:\SOFTWARE\WinRAR\Setup"
+              if (-not (Test-Path $WinRarHKLM)) { New-Item -Path $WinRarHKLM -Force | Out-Null }
+              Set-ItemProperty -Path $WinRarHKLM -Name "Cascaded" -Value 1 -Type DWord -Force
+              Set-ItemProperty -Path $WinRarHKLM -Name "MenuItms" -Value 2047 -Type DWord -Force
+
               $AssocList = @(".rar", ".zip", ".7z", ".tar", ".gz", ".iso", ".cab")
               foreach ($ext in $AssocList) {
                   cmd /c "assoc $ext=WinRAR" 2>&1 | Out-Null
@@ -138,12 +151,16 @@ jobs:
           $WinRarReg = "HKCU:\Software\WinRAR\Setup"
           if (-not (Test-Path $WinRarReg)) { New-Item -Path $WinRarReg -Force | Out-Null }
           Set-ItemProperty -Path $WinRarReg -Name "Cascaded" -Value 1 -Type DWord -Force
+          Set-ItemProperty -Path $WinRarReg -Name "MenuItms" -Value 2047 -Type DWord -Force
+          Set-ItemProperty -Path $WinRarReg -Name "Exts" -Value 1 -Type DWord -Force
 
           $LangList = Get-WinUserLanguageList
           if (-not ($LangList | Where-Object { $_.LanguageTag -eq "fa-IR" })) {
               $LangList.Add("fa-IR")
               Set-WinUserLanguageList -LanguageList $LangList -Force
           }
+
+          Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
           '@
           Set-Content -Path $UserInitScript -Value $InitScriptContent -Encoding UTF8
           Set-Content -Path $UserInitCmd -Value "powershell -ExecutionPolicy Bypass -File `"$UserInitScript`"" -Encoding ASCII
@@ -176,6 +193,9 @@ jobs:
 
           $VSCodePaths = @("C:\Program Files\Microsoft VS Code\Code.exe", "$env:LocalAppData\Programs\Microsoft VS Code\Code.exe")
           foreach ($vsp in $VSCodePaths) { if (Test-Path $vsp) { Create-Shortcut -Name "Visual Studio Code" -TargetPath $vsp; break } }
+
+          $ClaudePaths = @("$env:LocalAppData\Programs\Claude\Claude.exe", "C:\Program Files\Claude\Claude.exe", "$env:ProgramFiles\Claude\Claude.exe")
+          foreach ($cp in $ClaudePaths) { if (Test-Path $cp) { Create-Shortcut -Name "Claude Desktop" -TargetPath $cp; break } }
 
           Create-Shortcut -Name "Claude Code CLI" -TargetPath "C:\Windows\System32\cmd.exe" -Arguments "/k claude"
           Create-Shortcut -Name "9router" -TargetPath "C:\Windows\System32\cmd.exe" -Arguments "/k 9router"
