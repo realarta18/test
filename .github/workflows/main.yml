@@ -15,7 +15,7 @@ jobs:
           ROUTER_ZIP_PASSWORD: ${{ secrets.ROUTER_ZIP_PASSWORD }}
         run: |
           $ProgressPreference = 'SilentlyContinue'
-  
+
           Set-Service -Name seclogon -StartupType Automatic -ErrorAction SilentlyContinue
           Start-Service -Name seclogon -ErrorAction SilentlyContinue
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
@@ -74,28 +74,12 @@ jobs:
           npm install -g @anthropic-ai/claude-code 2>&1 | Out-Null
           npm install -g 9router 2>&1 | Out-Null
 
-          $RouterDir = "C:\Users\Administrator\AppData\Roaming"
-          $ZipPath = "$env:TEMP\9router.zip"
-          $DirectUrl = $env:ROUTER_ZIP_URL
-          $ZipPassword = $env:ROUTER_ZIP_PASSWORD
-
-          if ($DirectUrl) {
-              if (-not (Test-Path $RouterDir)) { 
-                  New-Item -Path $RouterDir -ItemType Directory -Force | Out-Null 
-              }
-
+          $StagingZip = "C:\ProgramData\9router_config.zip"
+          if (-not [string]::IsNullOrWhiteSpace($env:ROUTER_ZIP_URL)) {
               $UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-              curl.exe -sSL -A $UA $DirectUrl -o $ZipPath
-
-              $7zExe = "C:\Program Files\7-Zip\7z.exe"
-              if (-not (Test-Path $7zExe)) {
-                  try { winget install --id 7zip.7zip --silent --accept-package-agreements --accept-source-agreements --scope machine } catch {}
-              }
-
-              if (Test-Path $ZipPath) {
-                  & $7zExe x $ZipPath "-o$RouterDir" "-p$ZipPassword" -y | Out-Null
-                  Remove-Item -Path $ZipPath -Force -ErrorAction SilentlyContinue
-              }
+              try {
+                  curl.exe -sSL -A $UA $env:ROUTER_ZIP_URL -o $StagingZip
+              } catch {}
           }
 
           $Url = "https://github.com/MHSanaei/3x-ui/releases/latest/download/x-ui-windows-amd64.zip"
@@ -160,52 +144,72 @@ jobs:
           $UserInitScript = Join-Path $StartupFolder "InitUserConfig.ps1"
           $UserInitCmd = Join-Path $StartupFolder "InitUserConfig.cmd"
 
-          $InitScriptContent = @'
-          Stop-Process -Name "IDMan" -Force -ErrorAction SilentlyContinue
+          $PassValue = $env:ROUTER_ZIP_PASSWORD
 
-          $Personalize = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
-          if (-not (Test-Path $Personalize)) { New-Item -Path $Personalize -Force | Out-Null }
-          Set-ItemProperty -Path $Personalize -Name "AppsUseLightTheme" -Value 0 -Type DWord -Force
-          Set-ItemProperty -Path $Personalize -Name "SystemUsesLightTheme" -Value 0 -Type DWord -Force
-          Set-ItemProperty -Path $Personalize -Name "EnableTransparency" -Value 1 -Type DWord -Force
+          $InitScriptContent = @"
+          Stop-Process -Name "IDMan", "IExecutive" -Force -ErrorAction SilentlyContinue
 
-          $DesktopIcons = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel"
-          if (-not (Test-Path $DesktopIcons)) { New-Item -Path $DesktopIcons -Force | Out-Null }
-          Set-ItemProperty -Path $DesktopIcons -Name "{20D04FE0-3AEA-1069-A2D8-08002B30309D}" -Value 0 -Type DWord -Force
-
-          $ExplorerAdv = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
-          if (-not (Test-Path $ExplorerAdv)) { New-Item -Path $ExplorerAdv -Force | Out-Null }
-          Set-ItemProperty -Path $ExplorerAdv -Name "HideFileExt" -Value 0 -Type DWord -Force
-          Set-ItemProperty -Path $ExplorerAdv -Name "Hidden" -Value 1 -Type DWord -Force
-
-          $WinRarReg = "HKCU:\Software\WinRAR\Setup"
-          if (-not (Test-Path $WinRarReg)) { New-Item -Path $WinRarReg -Force | Out-Null }
-          Set-ItemProperty -Path $WinRarReg -Name "Cascaded" -Value 1 -Type DWord -Force
-          Set-ItemProperty -Path $WinRarReg -Name "MenuItms" -Value 2047 -Type DWord -Force
-          Set-ItemProperty -Path $WinRarReg -Name "Exts" -Value 1 -Type DWord -Force
-
-          $IdmReg = "HKCU:\Software\DownloadManager"
-          if (-not (Test-Path $IdmReg)) { New-Item -Path $IdmReg -Force | Out-Null }
-          Set-ItemProperty -Path $IdmReg -Name "LstLanguage" -Value "English" -Type String -Force
+          `$IdmReg = "HKCU:\Software\DownloadManager"
+          if (-not (Test-Path `$IdmReg)) { New-Item -Path `$IdmReg -Force | Out-Null }
+          Set-ItemProperty -Path `$IdmReg -Name "LstLanguage" -Value "English" -Type String -Force
+          Set-ItemProperty -Path `$IdmReg -Name "Language" -Value "English" -Type String -Force
+          Set-ItemProperty -Path `$IdmReg -Name "ShowTip" -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path `$IdmReg -Name "CheckUpdate" -Value 0 -Type DWord -Force
 
           Remove-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run" -Name "IDMan" -ErrorAction SilentlyContinue
           Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "IDMan" -ErrorAction SilentlyContinue
 
-          $WinRarExe = "C:\Program Files\WinRAR\WinRAR.exe"
-          if (Test-Path $WinRarExe) {
-              $p = Start-Process -FilePath $WinRarExe -WindowStyle Hidden -PassThru
-              Start-Sleep -Seconds 2
-              if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+          `$StagingZip = "C:\ProgramData\9router_config.zip"
+          if (Test-Path `$StagingZip) {
+              `$7zExe = "C:\Program Files\7-Zip\7z.exe"
+              if (Test-Path `$7zExe) {
+                  `$TargetDir = Join-Path `$env:APPDATA "9router"
+                  if (-not (Test-Path `$TargetDir)) { New-Item -Path `$TargetDir -ItemType Directory -Force | Out-Null }
+                  `$ZipPass = "$PassValue"
+                  if (-not [string]::IsNullOrWhiteSpace(`$ZipPass)) {
+                      & `$7zExe x `$StagingZip "-o`$TargetDir" "-p`$ZipPass" -y | Out-Null
+                  } else {
+                      & `$7zExe x `$StagingZip "-o`$TargetDir" -y | Out-Null
+                  }
+              }
           }
 
-          $LangList = Get-WinUserLanguageList
-          if (-not ($LangList | Where-Object { $_.LanguageTag -eq "fa-IR" })) {
-              $LangList.Add("fa-IR")
-              Set-WinUserLanguageList -LanguageList $LangList -Force
+          `$Personalize = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
+          if (-not (Test-Path `$Personalize)) { New-Item -Path `$Personalize -Force | Out-Null }
+          Set-ItemProperty -Path `$Personalize -Name "AppsUseLightTheme" -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path `$Personalize -Name "SystemUsesLightTheme" -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path `$Personalize -Name "EnableTransparency" -Value 1 -Type DWord -Force
+
+          `$DesktopIcons = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel"
+          if (-not (Test-Path `$DesktopIcons)) { New-Item -Path `$DesktopIcons -Force | Out-Null }
+          Set-ItemProperty -Path `$DesktopIcons -Name "{20D04FE0-3AEA-1069-A2D8-08002B30309D}" -Value 0 -Type DWord -Force
+
+          `$ExplorerAdv = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
+          if (-not (Test-Path `$ExplorerAdv)) { New-Item -Path `$ExplorerAdv -Force | Out-Null }
+          Set-ItemProperty -Path `$ExplorerAdv -Name "HideFileExt" -Value 0 -Type DWord -Force
+          Set-ItemProperty -Path `$ExplorerAdv -Name "Hidden" -Value 1 -Type DWord -Force
+
+          `$WinRarReg = "HKCU:\Software\WinRAR\Setup"
+          if (-not (Test-Path `$WinRarReg)) { New-Item -Path `$WinRarReg -Force | Out-Null }
+          Set-ItemProperty -Path `$WinRarReg -Name "Cascaded" -Value 1 -Type DWord -Force
+          Set-ItemProperty -Path `$WinRarReg -Name "MenuItms" -Value 2047 -Type DWord -Force
+          Set-ItemProperty -Path `$WinRarReg -Name "Exts" -Value 1 -Type DWord -Force
+
+          `$WinRarExe = "C:\Program Files\WinRAR\WinRAR.exe"
+          if (Test-Path `$WinRarExe) {
+              `$p = Start-Process -FilePath `$WinRarExe -WindowStyle Hidden -PassThru
+              Start-Sleep -Seconds 2
+              if (-not `$p.HasExited) { Stop-Process -Id `$p.Id -Force -ErrorAction SilentlyContinue }
+          }
+
+          `$LangList = Get-WinUserLanguageList
+          if (-not (`$LangList | Where-Object { `$_.LanguageTag -eq "fa-IR" })) {
+              `$LangList.Add("fa-IR")
+              Set-WinUserLanguageList -LanguageList `$LangList -Force
           }
 
           Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
-          '@
+"@
           Set-Content -Path $UserInitScript -Value $InitScriptContent -Encoding UTF8
           Set-Content -Path $UserInitCmd -Value "powershell -ExecutionPolicy Bypass -File `"$UserInitScript`"" -Encoding ASCII
 
