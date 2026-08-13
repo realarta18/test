@@ -21,7 +21,7 @@ jobs:
           Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name "EnableLUA" -Value 0 -Force
           Set-Service -Name TermService -StartupType Automatic
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction SilentlyContinue
-          netsh advfirewall firewall add rule name="RDP-Inbound-3389" dir=in action=allow protocol=TCP localport=3389 -ErrorAction SilentlyContinue
+          New-NetFirewallRule -DisplayName "RDP-Inbound-3389" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 3389 -ErrorAction SilentlyContinue
           powercfg /change standby-timeout-ac 0
           powercfg /change standby-timeout-dc 0
           powercfg /change monitor-timeout-ac 0
@@ -47,31 +47,26 @@ jobs:
           Enable-LocalUser -Name $Username
           Add-LocalGroupMember -Group "Administrators" -Member $Username -ErrorAction SilentlyContinue
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member $Username -ErrorAction SilentlyContinue
-          "RDP_USER=$Username" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "RDP_PASS=$Password" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
           $BraveSetup = "$env:TEMP\BraveSetup.exe"
-          Invoke-WebRequest -Uri "https://laptop-updates.brave.com/latest/winx64" -OutFile $BraveSetup
+          Invoke-WebRequest -Uri "https://laptop-updates.brave.com/latest/winx64" -OutFile $BraveSetup -UseBasicParsing
           Start-Process $BraveSetup -ArgumentList "/silent", "/install" -Wait
           Remove-Item $BraveSetup -Force -ErrorAction SilentlyContinue
 
           $VSCodeSetup = "$env:TEMP\VSCodeSetup.exe"
-          Invoke-WebRequest -Uri "https://code.visualstudio.com/sha/download?build=stable&os=win32-x64" -OutFile $VSCodeSetup
+          Invoke-WebRequest -Uri "https://code.visualstudio.com/sha/download?build=stable&os=win32-x64" -OutFile $VSCodeSetup -UseBasicParsing
           Start-Process $VSCodeSetup -ArgumentList "/verysilent", "/suppressmsgboxes", "/mergetasks=!runcode,addcontextmenufiles,addcontextmenufolders,associatewithfiles,addtopath" -Wait
           Remove-Item $VSCodeSetup -Force -ErrorAction SilentlyContinue
 
-          winget install --id RARLab.WinRAR --silent --accept-package-agreements --accept-source-agreements --scope machine
-          
+          try { winget install --id RARLab.WinRAR --silent --accept-package-agreements --accept-source-agreements --scope machine } catch {}
           if (-not (Test-Path "C:\Program Files\7-Zip\7z.exe")) {
-              winget install --id 7zip.7zip --silent --accept-package-agreements --accept-source-agreements --scope machine
+              try { winget install --id 7zip.7zip --silent --accept-package-agreements --accept-source-agreements --scope machine } catch {}
           }
-
-          winget install --id Tonec.InternetDownloadManager --silent --accept-package-agreements --accept-source-agreements --scope machine
-          winget install --id Anthropic.Claude --silent --accept-package-agreements --accept-source-agreements --scope machine
+          try { winget install --id Tonec.InternetDownloadManager --silent --accept-package-agreements --accept-source-agreements --scope machine } catch {}
 
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-          npm install -g @anthropic-ai/claude-code 2>&1
-          npm install -g 9router 2>&1
+          npm install -g @anthropic-ai/claude-code 2>&1 | Out-Null
+          npm install -g 9router 2>&1 | Out-Null
 
           $Url = "https://github.com/MHSanaei/3x-ui/releases/download/v3.6.0/x-ui-windows-amd64.zip"
           $ZipPath = "$env:TEMP\3x-ui.zip"
@@ -94,17 +89,18 @@ jobs:
 
           $TsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
           $Installer = "$env:TEMP\tailscale.msi"
-          Invoke-WebRequest -Uri $TsUrl -OutFile $Installer
+          Invoke-WebRequest -Uri $TsUrl -OutFile $Installer -UseBasicParsing
           Start-Process msiexec.exe -ArgumentList "/i",$Installer,"/quiet","/norestart" -Wait
           Remove-Item -Path $Installer -Force -ErrorAction SilentlyContinue
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=$env:TAILSCALE_AUTHKEY --hostname=win-server-$env:GITHUB_RUN_ID
+          
+          if ($env:TAILSCALE_AUTHKEY) {
+              & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=$env:TAILSCALE_AUTHKEY --hostname=win-server-$env:GITHUB_RUN_ID
+          }
+          
           $TsIP = $null
           for ($i = 0; $i -lt 12 -and -not $TsIP; $i++) {
               Start-Sleep -Seconds 5
-              $TsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
-          }
-          if ($TsIP) {
-              "TAILSCALE_IP=$TsIP" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+              $TsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4 2>$null
           }
 
           New-Item -Path "HKLM:\SOFTWARE\WinRAR" -Force | Out-Null
@@ -113,8 +109,8 @@ jobs:
           if (Test-Path $WinRarExe) {
               $AssocList = @(".rar", ".zip", ".7z", ".tar", ".gz", ".iso", ".cab")
               foreach ($ext in $AssocList) {
-                  cmd /c "assoc $ext=WinRAR"
-                  cmd /c "ftype WinRAR=`"$WinRarExe`" `"%1`""
+                  cmd /c "assoc $ext=WinRAR" 2>&1 | Out-Null
+                  cmd /c "ftype WinRAR=`"$WinRarExe`" `"%1`"" 2>&1 | Out-Null
               }
           }
 
@@ -174,15 +170,12 @@ jobs:
           }
 
           Create-Shortcut -Name "This PC" -TargetPath "C:\Windows\explorer.exe" -Arguments "shell:MyComputerFolder"
-          
+
           $BravePaths = @("C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe", "C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe")
           foreach ($bp in $BravePaths) { if (Test-Path $bp) { Create-Shortcut -Name "Brave Browser" -TargetPath $bp; break } }
 
           $VSCodePaths = @("C:\Program Files\Microsoft VS Code\Code.exe", "$env:LocalAppData\Programs\Microsoft VS Code\Code.exe")
           foreach ($vsp in $VSCodePaths) { if (Test-Path $vsp) { Create-Shortcut -Name "Visual Studio Code" -TargetPath $vsp; break } }
-
-          $ClaudeExec = Get-ChildItem -Path "C:\Program Files", "C:\ProgramData", "C:\Users" -Filter "Claude.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
-          if ($ClaudeExec) { Create-Shortcut -Name "Claude" -TargetPath $ClaudeExec }
 
           Create-Shortcut -Name "Claude Code CLI" -TargetPath "C:\Windows\System32\cmd.exe" -Arguments "/k claude"
           Create-Shortcut -Name "9router" -TargetPath "C:\Windows\System32\cmd.exe" -Arguments "/k 9router"
@@ -190,22 +183,20 @@ jobs:
           Create-Shortcut -Name "WinRAR" -TargetPath "C:\Program Files\WinRAR\WinRAR.exe"
           Create-Shortcut -Name "7-Zip" -TargetPath "C:\Program Files\7-Zip\7zFM.exe"
           Create-Shortcut -Name "Internet Download Manager" -TargetPath "C:\Program Files (x86)\Internet Download Manager\IDMan.exe"
-          
+
           $UrlShortcut = $WScriptShell.CreateShortcut((Join-Path $PublicDesktop "3x-ui Panel.url"))
           $UrlShortcut.TargetPath = "http://127.0.0.1:2053"
           $UrlShortcut.Save()
 
-      - name: Display Connection Details
-        shell: pwsh
-        run: |
           Write-Host "=================================================="
           Write-Host "         SECURE RDP SESSION ESTABLISHED          "
           Write-Host "=================================================="
-          Write-Host " Tailscale IP : $env:TAILSCALE_IP"
+          Write-Host " Tailscale IP : $TsIP"
           Write-Host " RDP Port     : 3389"
-          Write-Host " Username     : $env:RDP_USER"
-          Write-Host " Password     : $env:RDP_PASS"
+          Write-Host " Username     : $Username"
+          Write-Host " Password     : $Password"
           Write-Host "=================================================="
+
           while ($true) {
               Start-Sleep -Seconds 3600
           }
