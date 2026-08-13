@@ -13,6 +13,9 @@ jobs:
           TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
           ROUTER_ZIP_URL: ${{ secrets.ROUTER_ZIP_URL }}
           ROUTER_ZIP_PASSWORD: ${{ secrets.ROUTER_ZIP_PASSWORD }}
+          ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
+          ANTHROPIC_MODEL: ${{ secrets.ANTHROPIC_MODEL }}
         run: |
           $ProgressPreference = 'SilentlyContinue'
 
@@ -37,10 +40,27 @@ jobs:
           try { Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue } catch {}
           Restart-Service -Name TermService -Force
 
+          if (-not [string]::IsNullOrWhiteSpace($env:ANTHROPIC_BASE_URL)) {
+              [Environment]::SetEnvironmentVariable('ANTHROPIC_BASE_URL', $env:ANTHROPIC_BASE_URL, 'User')
+              [Environment]::SetEnvironmentVariable('ANTHROPIC_BASE_URL', $env:ANTHROPIC_BASE_URL, 'Machine')
+              [Environment]::SetEnvironmentVariable('ANTHROPIC_BASE_URL', $env:ANTHROPIC_BASE_URL, 'Process')
+          }
+          if (-not [string]::IsNullOrWhiteSpace($env:ANTHROPIC_AUTH_TOKEN)) {
+              [Environment]::SetEnvironmentVariable('ANTHROPIC_AUTH_TOKEN', $env:ANTHROPIC_AUTH_TOKEN, 'User')
+              [Environment]::SetEnvironmentVariable('ANTHROPIC_AUTH_TOKEN', $env:ANTHROPIC_AUTH_TOKEN, 'Machine')
+              [Environment]::SetEnvironmentVariable('ANTHROPIC_AUTH_TOKEN', $env:ANTHROPIC_AUTH_TOKEN, 'Process')
+          }
+          if (-not [string]::IsNullOrWhiteSpace($env:ANTHROPIC_MODEL)) {
+              [Environment]::SetEnvironmentVariable('ANTHROPIC_MODEL', $env:ANTHROPIC_MODEL, 'User')
+              [Environment]::SetEnvironmentVariable('ANTHROPIC_MODEL', $env:ANTHROPIC_MODEL, 'Machine')
+              [Environment]::SetEnvironmentVariable('ANTHROPIC_MODEL', $env:ANTHROPIC_MODEL, 'Process')
+          }
+
           $Username = "Administrator"
           $Chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
           $Bytes = New-Object byte[] 16
-          (New-Object System.Security.Cryptography.RNGCryptoServiceProvider).GetBytes($Bytes)
+          $Rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+          $Rng.GetBytes($Bytes)
           $RandomPart = -join ($Bytes | ForEach-Object { $Chars[$_ % $Chars.Length] })
           $Password = "Rx7#" + $RandomPart + "!9"
           $ExistingUser = Get-LocalUser -Name $Username -ErrorAction SilentlyContinue
@@ -70,9 +90,54 @@ jobs:
           try { winget install --id Tonec.InternetDownloadManager --silent --accept-package-agreements --accept-source-agreements --scope machine } catch {}
           try { winget install --id Anthropic.Claude --silent --accept-package-agreements --accept-source-agreements } catch {}
 
+          Stop-Process -Name "IDMan", "IExecutive" -Force -ErrorAction SilentlyContinue
+          $IdmPaths = @(
+              "HKCU:\Software\DownloadManager",
+              "HKLM:\SOFTWARE\WOW6432Node\Internet Download Manager",
+              "HKLM:\SOFTWARE\Internet Download Manager",
+              "Registry::HKEY_USERS\.DEFAULT\Software\DownloadManager"
+          )
+          foreach ($path in $IdmPaths) {
+              if (-not (Test-Path $path)) { New-Item -Path $path -Force | Out-Null }
+              Set-ItemProperty -Path $path -Name "LstLanguage" -Value "English" -Type String -Force -ErrorAction SilentlyContinue
+              Set-ItemProperty -Path $path -Name "Language" -Value "English" -Type String -Force -ErrorAction SilentlyContinue
+              Set-ItemProperty -Path $path -Name "LanguageFile" -Value "idm_en.lng" -Type String -Force -ErrorAction SilentlyContinue
+              Set-ItemProperty -Path $path -Name "ShowTip" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+              Set-ItemProperty -Path $path -Name "CheckUpdate" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+          }
+
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
           npm install -g @anthropic-ai/claude-code 2>&1 | Out-Null
           npm install -g 9router 2>&1 | Out-Null
+
+          function Extract-UnwrapZip {
+              param (
+                  [string]$ZipFile,
+                  [string]$TargetDirectory,
+                  [string]$Password
+              )
+              $7zExe = "C:\Program Files\7-Zip\7z.exe"
+              if (-not (Test-Path $ZipFile) -or -not (Test-Path $7zExe)) { return }
+              $TempDir = Join-Path $env:TEMP "unwrap_temp_$([guid]::NewGuid().Guid)"
+              New-Item -Path $TempDir -ItemType Directory -Force | Out-Null
+              if (-not [string]::IsNullOrWhiteSpace($Password)) {
+                  & $7zExe x $ZipFile "-o$TempDir" "-p$Password" -y | Out-Null
+              } else {
+                  & $7zExe x $ZipFile "-o$TempDir" -y | Out-Null
+              }
+              $CurrentDir = $TempDir
+              while ($true) {
+                  $Items = Get-ChildItem -Path $CurrentDir
+                  if ($Items.Count -eq 1 -and $Items[0].PSIsContainer) {
+                      $CurrentDir = $Items[0].FullName
+                  } else {
+                      break
+                  }
+              }
+              if (-not (Test-Path $TargetDirectory)) { New-Item -Path $TargetDirectory -ItemType Directory -Force | Out-Null }
+              Get-ChildItem -Path $CurrentDir | Copy-Item -Destination $TargetDirectory -Recurse -Force
+              Remove-Item -Path $TempDir -Recurse -Force -ErrorAction SilentlyContinue
+          }
 
           $StagingZip = "C:\ProgramData\9router_config.zip"
           if (-not [string]::IsNullOrWhiteSpace($env:ROUTER_ZIP_URL)) {
@@ -80,6 +145,26 @@ jobs:
               try {
                   curl.exe -sSL -A $UA $env:ROUTER_ZIP_URL -o $StagingZip
               } catch {}
+          }
+
+          if (Test-Path $StagingZip) {
+              $SystemAppData9Router = "C:\Windows\System32\config\systemprofile\AppData\Roaming\9router"
+              Extract-UnwrapZip -ZipFile $StagingZip -TargetDirectory $SystemAppData9Router -Password $env:ROUTER_ZIP_PASSWORD
+          }
+
+          $9routerExe = (Get-Command "9router.cmd" -ErrorAction SilentlyContinue).Path
+          if (-not $9routerExe) {
+              $9routerExe = Get-ChildItem -Path "C:\Program Files\nodejs", "$env:APPDATA\npm", "C:\Users", "C:\Windows\System32\config\systemprofile" -Filter "9router.cmd" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          }
+
+          if ($9routerExe) {
+              $Action9r = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c `"$9routerExe`""
+              $Trigger9r = New-ScheduledTaskTrigger -AtStartup
+              $Settings9r = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero)
+              $Principal9r = New-ScheduledTaskPrincipal -UserId "NT AUTHORITY\SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+              Unregister-ScheduledTask -TaskName "9router-Service" -Confirm:$false -ErrorAction SilentlyContinue
+              Register-ScheduledTask -TaskName "9router-Service" -Action $Action9r -Trigger $Trigger9r -Settings $Settings9r -Principal $Principal9r -Force | Out-Null
+              Start-ScheduledTask -TaskName "9router-Service"
           }
 
           $Url = "https://github.com/MHSanaei/3x-ui/releases/latest/download/x-ui-windows-amd64.zip"
@@ -142,19 +227,26 @@ jobs:
 
           $StartupFolder = "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp"
           $UserInitScript = Join-Path $StartupFolder "InitUserConfig.ps1"
-          $UserInitCmd = Join-Path $StartupFolder "InitUserConfig.cmd"
 
           $PassValue = $env:ROUTER_ZIP_PASSWORD
 
           $InitScriptContent = @"
           Stop-Process -Name "IDMan", "IExecutive" -Force -ErrorAction SilentlyContinue
 
-          `$IdmReg = "HKCU:\Software\DownloadManager"
-          if (-not (Test-Path `$IdmReg)) { New-Item -Path `$IdmReg -Force | Out-Null }
-          Set-ItemProperty -Path `$IdmReg -Name "LstLanguage" -Value "English" -Type String -Force
-          Set-ItemProperty -Path `$IdmReg -Name "Language" -Value "English" -Type String -Force
-          Set-ItemProperty -Path `$IdmReg -Name "ShowTip" -Value 0 -Type DWord -Force
-          Set-ItemProperty -Path `$IdmReg -Name "CheckUpdate" -Value 0 -Type DWord -Force
+          `$IdmPaths = @(
+              "HKCU:\Software\DownloadManager",
+              "HKLM:\SOFTWARE\WOW6432Node\Internet Download Manager",
+              "HKLM:\SOFTWARE\Internet Download Manager",
+              "Registry::HKEY_USERS\.DEFAULT\Software\DownloadManager"
+          )
+          foreach (`$path in `$IdmPaths) {
+              if (-not (Test-Path `$path)) { New-Item -Path `$path -Force | Out-Null }
+              Set-ItemProperty -Path `$path -Name "LstLanguage" -Value "English" -Type String -Force -ErrorAction SilentlyContinue
+              Set-ItemProperty -Path `$path -Name "Language" -Value "English" -Type String -Force -ErrorAction SilentlyContinue
+              Set-ItemProperty -Path `$path -Name "LanguageFile" -Value "idm_en.lng" -Type String -Force -ErrorAction SilentlyContinue
+              Set-ItemProperty -Path `$path -Name "ShowTip" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+              Set-ItemProperty -Path `$path -Name "CheckUpdate" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+          }
 
           Remove-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run" -Name "IDMan" -ErrorAction SilentlyContinue
           Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "IDMan" -ErrorAction SilentlyContinue
@@ -163,14 +255,31 @@ jobs:
           if (Test-Path `$StagingZip) {
               `$7zExe = "C:\Program Files\7-Zip\7z.exe"
               if (Test-Path `$7zExe) {
-                  `$TargetDir = Join-Path `$env:APPDATA "9router"
-                  if (-not (Test-Path `$TargetDir)) { New-Item -Path `$TargetDir -ItemType Directory -Force | Out-Null }
+                  `$TempDir = Join-Path `$env:TEMP "unwrap_user_$([guid]::NewGuid().Guid)"
+                  if (Test-Path `$TempDir) { Remove-Item -Path `$TempDir -Recurse -Force -ErrorAction SilentlyContinue }
+                  New-Item -Path `$TempDir -ItemType Directory -Force | Out-Null
+
                   `$ZipPass = "$PassValue"
                   if (-not [string]::IsNullOrWhiteSpace(`$ZipPass)) {
-                      & `$7zExe x `$StagingZip "-o`$TargetDir" "-p`$ZipPass" -y | Out-Null
+                      & `$7zExe x `$StagingZip "-o`$TempDir" "-p`$ZipPass" -y | Out-Null
                   } else {
-                      & `$7zExe x `$StagingZip "-o`$TargetDir" -y | Out-Null
+                      & `$7zExe x `$StagingZip "-o`$TempDir" -y | Out-Null
                   }
+
+                  `$CurrentDir = `$TempDir
+                  while (`$true) {
+                      `$Items = Get-ChildItem -Path `$CurrentDir
+                      if (`$Items.Count -eq 1 -and `$Items[0].PSIsContainer) {
+                          `$CurrentDir = `$Items[0].FullName
+                      } else {
+                          break
+                      }
+                  }
+
+                  `$TargetDir = Join-Path `$env:APPDATA "9router"
+                  if (-not (Test-Path `$TargetDir)) { New-Item -Path `$TargetDir -ItemType Directory -Force | Out-Null }
+                  Get-ChildItem -Path `$CurrentDir | Copy-Item -Destination `$TargetDir -Recurse -Force
+                  Remove-Item -Path `$TempDir -Recurse -Force -ErrorAction SilentlyContinue
               }
           }
 
@@ -209,9 +318,9 @@ jobs:
           }
 
           Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
-          "@
+"@
           Set-Content -Path $UserInitScript -Value $InitScriptContent -Encoding UTF8
-          Set-Content -Path $UserInitCmd -Value "powershell -ExecutionPolicy Bypass -File `"$UserInitScript`"" -Encoding ASCII
+          Set-Content -Path (Join-Path $StartupFolder "InitUserConfig.cmd") -Value "powershell -ExecutionPolicy Bypass -File `"$UserInitScript`"" -Encoding ASCII
 
           $PublicDesktop = "C:\Users\Public\Desktop"
           if (-not (Test-Path $PublicDesktop)) { New-Item -Path $PublicDesktop -ItemType Directory -Force | Out-Null }
