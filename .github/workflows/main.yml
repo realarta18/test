@@ -166,7 +166,6 @@ jobs:
               try { winget install --id 7zip.7zip --silent --accept-package-agreements --accept-source-agreements --scope machine } catch {}
           }
           try { winget install --id Tonec.InternetDownloadManager --silent --accept-package-agreements --accept-source-agreements --scope machine } catch {}
-          try { winget install --id Anthropic.Claude --silent --accept-package-agreements --accept-source-agreements } catch {}
           Log-Step "Deploying Core Software Stack (Parallel Installation Jobs)" "SUCCESS"
 
           Log-Step "Applying IDM Registry Fixes to Permanently Suppress Language Dialogs"
@@ -412,9 +411,6 @@ jobs:
 
           $KnownVSCodePaths = @("C:\Program Files\Microsoft VS Code\Code.exe", "$env:LocalAppData\Programs\Microsoft VS Code\Code.exe")
           foreach ($Path in $KnownVSCodePaths) { if (Test-Path $Path) { Build-Shortcut -ShortcutName "Visual Studio Code" -TargetBinaryPath $Path; break } }
-
-          $KnownClaudePaths = @("C:\Users\runneradmin\AppData\Local\Programs\Claude\Claude.exe", "C:\Users\runneradmin\AppData\Local\Claude\Claude.exe", "C:\Program Files\Claude\Claude.exe", "$env:LocalAppData\Programs\Claude\Claude.exe")
-          foreach ($Path in $KnownClaudePaths) { if (Test-Path $Path) { Build-Shortcut -ShortcutName "Claude Desktop" -TargetBinaryPath $Path; break } }
 
           Build-Shortcut -ShortcutName "WinRAR" -TargetBinaryPath "C:\Program Files\WinRAR\WinRAR.exe"
           Build-Shortcut -ShortcutName "7-Zip" -TargetBinaryPath "C:\Program Files\7-Zip\7zFM.exe"
