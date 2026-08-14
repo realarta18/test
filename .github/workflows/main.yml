@@ -191,6 +191,7 @@ jobs:
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
           npm install -g @anthropic-ai/claude-code 2>&1 | Out-Null
           npm install -g 9router 2>&1 | Out-Null
+          npm install -g opencode-ai 2>&1 | Out-Null
           Log-Step "Installing Global CLI Tools via NPM Package Manager" "SUCCESS"
 
           Log-Step "Downloading and Unwrapping 9router Configuration Package"
